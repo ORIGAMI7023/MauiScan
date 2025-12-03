@@ -1,5 +1,8 @@
 using MauiScan.Models;
 using MauiScan.Services;
+#if ANDROID
+using MauiScan.Platforms.Android.Services;
+#endif
 
 namespace MauiScan.Views;
 
@@ -79,6 +82,65 @@ public partial class ScanPage : ContentPage
         {
             SetLoading(false);
         }
+    }
+
+    private async void OnMLKitScanClicked(object sender, EventArgs e)
+    {
+#if ANDROID
+        try
+        {
+            SetLoading(true);
+            StatusLabel.Text = "正在启动 ML Kit 扫描...";
+
+            var activity = Platform.CurrentActivity;
+            if (activity == null)
+            {
+                StatusLabel.Text = "无法获取 Activity";
+                return;
+            }
+
+            var result = await MLKitDocumentScannerService.StartScanAsync(activity);
+
+            if (!result.IsSuccess)
+            {
+                if (result.ErrorMessage != "扫描已取消")
+                {
+                    await DisplayAlert("扫描失败", result.ErrorMessage ?? "未知错误", "确定");
+                }
+                StatusLabel.Text = result.ErrorMessage ?? "扫描失败";
+                return;
+            }
+
+            // 显示结果
+            _currentImageData = result.ImageData;
+            _currentRotation = 0;
+            PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
+            PreviewImage.IsVisible = true;
+            PlaceholderLabel.IsVisible = false;
+            SaveButton.IsEnabled = true;
+            RotateButtonsGrid.IsVisible = true;
+
+            StatusLabel.Text = $"✓ ML Kit 扫描成功 ({result.Width}×{result.Height})";
+
+            // 自动复制到剪贴板
+            var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
+            if (copied)
+            {
+                StatusLabel.Text += " | 已复制到剪贴板";
+            }
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("错误", $"ML Kit 扫描异常: {ex.Message}", "确定");
+            StatusLabel.Text = "发生错误";
+        }
+        finally
+        {
+            SetLoading(false);
+        }
+#else
+        await DisplayAlert("不支持", "ML Kit 扫描仅支持 Android 平台", "确定");
+#endif
     }
 
     private async void OnSaveClicked(object sender, EventArgs e)

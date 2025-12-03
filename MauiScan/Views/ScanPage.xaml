@@ -40,13 +40,25 @@
         <!-- 操作按钮 -->
         <VerticalStackLayout Grid.Row="1" Spacing="12">
 
-            <Button x:Name="CaptureButton"
-                    Text="📷 拍摄文档"
-                    Clicked="OnCaptureClicked"
-                    BackgroundColor="#512BD4"
-                    TextColor="White"
-                    HeightRequest="50"
-                    CornerRadius="8"/>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <Button Grid.Column="0"
+                        x:Name="CaptureButton"
+                        Text="📷 传统扫描"
+                        Clicked="OnCaptureClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="1"
+                        x:Name="MLKitScanButton"
+                        Text="🤖 ML Kit 扫描"
+                        Clicked="OnMLKitScanClicked"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+            </Grid>
 
             <!-- 旋转按钮 -->
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12" x:Name="RotateButtonsGrid" IsVisible="False">
