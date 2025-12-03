@@ -119,7 +119,7 @@ public partial class ScanPage : ContentPage
         var contentValues = new Android.Content.ContentValues();
         contentValues.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, fileName);
         contentValues.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, "image/jpeg");
-        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath, Android.OS.Environment.DirectoryPictures + "/MauiScan");
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath, "Pictures/MauiScan");
 
         var uri = contentResolver!.Insert(Android.Provider.MediaStore.Images.Media.ExternalContentUri!, contentValues);
         if (uri == null)
