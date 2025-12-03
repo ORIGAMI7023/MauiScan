@@ -5,7 +5,7 @@ setlocal enabledelayedexpansion
 
 REM 配置（需要用户修改）
 set "ANDROID_NDK=C:\Program Files (x86)\Android\AndroidNDK\android-ndk-r27c"
-set "OPENCV_ANDROID_SDK=D:\OpenCV-android-sdk"
+set "OPENCV_ANDROID_SDK=D:\Programing\C#\MauiScan\OpenCVSDK\OpenCV-android-sdk"
 set "MIN_SDK_VERSION=21"
 
 REM 检查 NDK（使用延迟展开避免括号冲突）

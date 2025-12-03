@@ -19,10 +19,10 @@ static const char* SCANNER_VERSION = "1.0.0";
 // 默认参数
 ScannerParams scanner_get_default_params(void) {
     ScannerParams params;
-    params.canny_threshold1 = 50.0;
-    params.canny_threshold2 = 150.0;
+    params.canny_threshold1 = 30.0;   // 降低阈值，更容易检测边缘
+    params.canny_threshold2 = 100.0;  // 降低阈值
     params.gaussian_kernel_size = 5;
-    params.min_contour_area_ratio = 0.1;
+    params.min_contour_area_ratio = 0.05; // 降低最小面积要求
     params.jpeg_quality = 95;
     return params;
 }
@@ -114,15 +114,25 @@ static bool detect_document_bounds_internal(
                 break;
             }
 
-            // 轮廓近似
+            // 轮廓近似（放宽误差范围）
             double peri = arcLength(contour, true);
             std::vector<Point> approx;
-            approxPolyDP(contour, approx, 0.02 * peri, true);
+            approxPolyDP(contour, approx, 0.03 * peri, true); // 从 0.02 放宽到 0.03
 
             // 如果是四边形，则认为是文档边界
             if (approx.size() == 4) {
                 sort_quad_points(approx, quad);
                 return true;
+            }
+
+            // 如果近似为5-6边形，尝试进一步简化
+            if (approx.size() >= 4 && approx.size() <= 6) {
+                std::vector<Point> approx2;
+                approxPolyDP(contour, approx2, 0.05 * peri, true);
+                if (approx2.size() == 4) {
+                    sort_quad_points(approx2, quad);
+                    return true;
+                }
             }
         }
 
@@ -205,6 +215,15 @@ int32_t scanner_process_scan(
     if (!input_data || input_size <= 0 || !params || !result) {
         return -1;
     }
+
+    // 初始化 result 结构体
+    result->image_data = nullptr;
+    result->image_size = 0;
+    result->width = 0;
+    result->height = 0;
+    result->success = 0;
+    std::memset(&result->quad, 0, sizeof(QuadPoints));
+    result->error_message[0] = '\0';
 
     try {
         // 解码输入图像

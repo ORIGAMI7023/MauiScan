@@ -113,7 +113,8 @@ public class NativeImageProcessingService : IImageProcessingService
         {
             try
             {
-                System.Diagnostics.Debug.WriteLine($"[Native] 开始处理图像，大小: {imageBytes.Length} 字节");
+                System.Diagnostics.Debug.WriteLine($"[Native] ====== 新的扫描请求 ======");
+                System.Diagnostics.Debug.WriteLine($"[Native] 图像大小: {imageBytes.Length} 字节, 前4字节: {imageBytes[0]:X2} {imageBytes[1]:X2} {imageBytes[2]:X2} {imageBytes[3]:X2}");
 
                 // 测试库是否可加载
                 try
@@ -128,7 +129,16 @@ public class NativeImageProcessingService : IImageProcessingService
                 }
 
                 var parameters = scanner_get_default_params();
-                System.Diagnostics.Debug.WriteLine($"[Native] 参数: Canny={parameters.CannyThreshold1},{parameters.CannyThreshold2}");
+                System.Diagnostics.Debug.WriteLine($"[Native] 参数: Canny={parameters.CannyThreshold1},{parameters.CannyThreshold2}, Gaussian={parameters.GaussianKernelSize}, MinArea={parameters.MinContourAreaRatio}, Quality={parameters.JpegQuality}");
+
+                // 检查参数是否被污染
+                if (parameters.CannyThreshold1 != 50 || parameters.CannyThreshold2 != 150 ||
+                    parameters.GaussianKernelSize != 5 || parameters.JpegQuality != 95 ||
+                    parameters.MinContourAreaRatio < 0.05 || parameters.MinContourAreaRatio > 0.5)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Native] ⚠️ 参数异常！重新获取默认参数");
+                    parameters = scanner_get_default_params();
+                }
 
                 var nativeResult = new NativeScanResult
                 {
