@@ -40,25 +40,14 @@
         <!-- 操作按钮 -->
         <VerticalStackLayout Grid.Row="1" Spacing="12">
 
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Button Grid.Column="0"
-                        x:Name="CaptureButton"
-                        Text="📷 传统扫描"
-                        Clicked="OnCaptureClicked"
-                        BackgroundColor="#6C757D"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"/>
-
-                <Button Grid.Column="1"
-                        x:Name="MLKitScanButton"
-                        Text="🤖 ML Kit 扫描"
-                        Clicked="OnMLKitScanClicked"
-                        BackgroundColor="#512BD4"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"/>
-            </Grid>
+            <!-- 扫描按钮 -->
+            <Button x:Name="CaptureButton"
+                    Text="📷 扫描文档"
+                    Clicked="OnCaptureClicked"
+                    BackgroundColor="#512BD4"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"/>
 
             <!-- 旋转按钮 -->
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12" x:Name="RotateButtonsGrid" IsVisible="False">
@@ -81,26 +70,15 @@
                         CornerRadius="8"/>
             </Grid>
 
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Button Grid.Column="0"
-                        x:Name="SaveButton"
-                        Text="💾 保存"
-                        Clicked="OnSaveClicked"
-                        BackgroundColor="#28A745"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"
-                        IsEnabled="False"/>
-
-                <Button Grid.Column="1"
-                        x:Name="EnhanceButton"
-                        Text="✨ 增强模式"
-                        Clicked="OnEnhanceToggled"
-                        BackgroundColor="#FFC107"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"/>
-            </Grid>
+            <!-- 保存按钮 -->
+            <Button x:Name="SaveButton"
+                    Text="💾 保存到本地"
+                    Clicked="OnSaveClicked"
+                    BackgroundColor="#28A745"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"
+                    IsEnabled="False"/>
 
             <Label x:Name="StatusLabel"
                    Text=""

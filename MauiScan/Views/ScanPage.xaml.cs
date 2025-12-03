@@ -1,8 +1,5 @@
 using MauiScan.Models;
 using MauiScan.Services;
-#if ANDROID
-using MauiScan.Platforms.Android.Services;
-#endif
 
 namespace MauiScan.Views;
 
@@ -13,7 +10,6 @@ public partial class ScanPage : ContentPage
     private readonly IClipboardService _clipboardService;
 
     private byte[]? _currentImageData;
-    private bool _enhancementEnabled = false;
     private int _currentRotation = 0;
 
     public ScanPage(
@@ -46,7 +42,7 @@ public partial class ScanPage : ContentPage
             StatusLabel.Text = "正在处理图像...";
 
             // 2. 处理图像（边缘检测 + 透视变换）
-            var result = await _imageProcessingService.ProcessScanAsync(photoBytes, _enhancementEnabled);
+            var result = await _imageProcessingService.ProcessScanAsync(photoBytes, false);
 
             if (!result.IsSuccess)
             {
@@ -64,13 +60,15 @@ public partial class ScanPage : ContentPage
             SaveButton.IsEnabled = true;
             RotateButtonsGrid.IsVisible = true;
 
-            StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
-
             // 4. 自动复制到剪贴板
             var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
             if (copied)
             {
-                StatusLabel.Text += " | 已复制到剪贴板";
+                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height}) | 已复制到剪贴板";
+            }
+            else
+            {
+                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
             }
         }
         catch (Exception ex)
@@ -82,65 +80,6 @@ public partial class ScanPage : ContentPage
         {
             SetLoading(false);
         }
-    }
-
-    private async void OnMLKitScanClicked(object sender, EventArgs e)
-    {
-#if ANDROID
-        try
-        {
-            SetLoading(true);
-            StatusLabel.Text = "正在启动 ML Kit 扫描...";
-
-            var activity = Platform.CurrentActivity;
-            if (activity == null)
-            {
-                StatusLabel.Text = "无法获取 Activity";
-                return;
-            }
-
-            var result = await MLKitDocumentScannerService.StartScanAsync(activity);
-
-            if (!result.IsSuccess)
-            {
-                if (result.ErrorMessage != "扫描已取消")
-                {
-                    await DisplayAlert("扫描失败", result.ErrorMessage ?? "未知错误", "确定");
-                }
-                StatusLabel.Text = result.ErrorMessage ?? "扫描失败";
-                return;
-            }
-
-            // 显示结果
-            _currentImageData = result.ImageData;
-            _currentRotation = 0;
-            PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
-            PreviewImage.IsVisible = true;
-            PlaceholderLabel.IsVisible = false;
-            SaveButton.IsEnabled = true;
-            RotateButtonsGrid.IsVisible = true;
-
-            StatusLabel.Text = $"✓ ML Kit 扫描成功 ({result.Width}×{result.Height})";
-
-            // 自动复制到剪贴板
-            var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
-            if (copied)
-            {
-                StatusLabel.Text += " | 已复制到剪贴板";
-            }
-        }
-        catch (Exception ex)
-        {
-            await DisplayAlert("错误", $"ML Kit 扫描异常: {ex.Message}", "确定");
-            StatusLabel.Text = "发生错误";
-        }
-        finally
-        {
-            SetLoading(false);
-        }
-#else
-        await DisplayAlert("不支持", "ML Kit 扫描仅支持 Android 平台", "确定");
-#endif
     }
 
     private async void OnSaveClicked(object sender, EventArgs e)
@@ -163,24 +102,6 @@ public partial class ScanPage : ContentPage
         {
             await DisplayAlert("保存失败", ex.Message, "确定");
         }
-    }
-
-    private void OnEnhanceToggled(object sender, EventArgs e)
-    {
-        _enhancementEnabled = !_enhancementEnabled;
-
-        if (_enhancementEnabled)
-        {
-            EnhanceButton.Text = "✨ 增强模式: 开";
-            EnhanceButton.BackgroundColor = Color.FromArgb("#FF5722");
-        }
-        else
-        {
-            EnhanceButton.Text = "✨ 增强模式: 关";
-            EnhanceButton.BackgroundColor = Color.FromArgb("#FFC107");
-        }
-
-        StatusLabel.Text = _enhancementEnabled ? "增强模式已启用（灰度+对比度）" : "增强模式已关闭";
     }
 
     private async void OnRotateLeftClicked(object sender, EventArgs e)
@@ -210,10 +131,17 @@ public partial class ScanPage : ContentPage
             {
                 _currentImageData = rotatedData;
                 PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(rotatedData));
-                StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
 
                 // 更新剪贴板
-                await _clipboardService.CopyImageToClipboardAsync(rotatedData);
+                var copied = await _clipboardService.CopyImageToClipboardAsync(rotatedData);
+                if (copied)
+                {
+                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90° | 已复制到剪贴板";
+                }
+                else
+                {
+                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
+                }
             }
         }
         catch (Exception ex)
@@ -253,6 +181,5 @@ public partial class ScanPage : ContentPage
         LoadingIndicator.IsVisible = isLoading;
         CaptureButton.IsEnabled = !isLoading;
         SaveButton.IsEnabled = !isLoading && _currentImageData != null;
-        EnhanceButton.IsEnabled = !isLoading;
     }
 }

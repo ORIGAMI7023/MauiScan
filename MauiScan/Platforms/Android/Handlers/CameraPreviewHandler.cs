@@ -36,6 +36,10 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
     private Rect? _sensorArraySize;
     private ScaleListener? _scaleListener;
 
+    // 对焦相关
+    private bool _isManualFocusLocked = false;
+    private GestureDetector? _tapGestureDetector;
+
     public static IPropertyMapper<CameraView, CameraPreviewHandler> Mapper =
         new PropertyMapper<CameraView, CameraPreviewHandler>(ViewHandler.ViewMapper);
 
@@ -50,10 +54,14 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
         _scaleListener = new ScaleListener(this);
         _scaleGestureDetector = new ScaleGestureDetector(Context!, _scaleListener);
 
+        // 初始化点击手势检测器（用于点击对焦）
+        _tapGestureDetector = new GestureDetector(Context!, new TapListener(this));
+
         // 设置触摸监听
         textureView.Touch += (sender, e) =>
         {
             _scaleGestureDetector?.OnTouchEvent(e.Event!);
+            _tapGestureDetector?.OnTouchEvent(e.Event!);
             e.Handled = true;
         };
 
@@ -281,6 +289,126 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
         _imageReader = null;
     }
 
+    /// <summary>
+    /// 点击对焦
+    /// </summary>
+    internal void TapToFocus(float x, float y)
+    {
+        if (_sensorArraySize == null || _previewRequestBuilder == null || _captureSession == null || _cameraDevice == null)
+            return;
+
+        try
+        {
+            // 将触摸坐标转换为传感器坐标
+            var focusRect = CalculateFocusRect(x, y);
+            if (focusRect == null) return;
+
+            System.Diagnostics.Debug.WriteLine($"[Camera2] 点击对焦: ({x}, {y}) -> {focusRect}");
+
+            // 设置对焦区域
+            var afRegions = new MeteringRectangle[] { new MeteringRectangle(focusRect, MeteringRectangle.MeteringWeightMax) };
+
+            // 先取消当前对焦
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfTrigger!, (int)ControlAFTrigger.Cancel);
+            _captureSession.Capture(_previewRequestBuilder.Build(), null, _backgroundHandler);
+
+            // 设置为自动对焦模式（单次）
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfMode!, (int)ControlAFMode.Auto);
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfRegions!, afRegions);
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfTrigger!, (int)ControlAFTrigger.Start);
+
+            // 同时设置测光区域
+            _previewRequestBuilder.Set(CaptureRequest.ControlAeRegions!, afRegions);
+
+            _captureSession.Capture(_previewRequestBuilder.Build(), new FocusCallback(this), _backgroundHandler);
+
+            // 清除触发器，保持对焦锁定
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfTrigger!, (int)ControlAFTrigger.Idle);
+            _captureSession.SetRepeatingRequest(_previewRequestBuilder.Build(), null, _backgroundHandler);
+
+            _isManualFocusLocked = true;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Camera2] 对焦失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 计算对焦区域（将屏幕坐标转换为传感器坐标）
+    /// </summary>
+    private Rect? CalculateFocusRect(float x, float y)
+    {
+        if (_sensorArraySize == null || PlatformView == null) return null;
+
+        var viewWidth = PlatformView.Width;
+        var viewHeight = PlatformView.Height;
+
+        if (viewWidth == 0 || viewHeight == 0) return null;
+
+        // 对焦区域大小（传感器坐标系）
+        var focusSize = Math.Min(_sensorArraySize.Width(), _sensorArraySize.Height()) / 8;
+
+        // 考虑缩放后的裁剪区域
+        var zoomRect = GetZoomRect(_currentZoom);
+        if (zoomRect == null) return null;
+
+        // 将触摸点映射到当前缩放后的传感器区域
+        // 注意：相机传感器是横向的，需要根据传感器方向调整
+        int sensorX, sensorY;
+
+        if (_sensorOrientation == 90)
+        {
+            // 竖屏时，x对应传感器的y，y对应传感器的x（反向）
+            sensorX = zoomRect.Left + (int)((1 - y / viewHeight) * zoomRect.Width());
+            sensorY = zoomRect.Top + (int)(x / viewWidth * zoomRect.Height());
+        }
+        else if (_sensorOrientation == 270)
+        {
+            sensorX = zoomRect.Left + (int)(y / viewHeight * zoomRect.Width());
+            sensorY = zoomRect.Top + (int)((1 - x / viewWidth) * zoomRect.Height());
+        }
+        else
+        {
+            sensorX = zoomRect.Left + (int)(x / viewWidth * zoomRect.Width());
+            sensorY = zoomRect.Top + (int)(y / viewHeight * zoomRect.Height());
+        }
+
+        // 创建对焦矩形
+        var left = Math.Max(0, sensorX - focusSize / 2);
+        var top = Math.Max(0, sensorY - focusSize / 2);
+        var right = Math.Min(_sensorArraySize.Width(), left + focusSize);
+        var bottom = Math.Min(_sensorArraySize.Height(), top + focusSize);
+
+        return new Rect(left, top, right, bottom);
+    }
+
+    /// <summary>
+    /// 恢复自动对焦
+    /// </summary>
+    internal void ResetToAutoFocus()
+    {
+        if (_previewRequestBuilder == null || _captureSession == null)
+            return;
+
+        try
+        {
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfMode!, (int)ControlAFMode.ContinuousPicture);
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfRegions!, null);
+            _previewRequestBuilder.Set(CaptureRequest.ControlAeRegions!, null);
+            _previewRequestBuilder.Set(CaptureRequest.ControlAfTrigger!, (int)ControlAFTrigger.Cancel);
+
+            _captureSession.SetRepeatingRequest(_previewRequestBuilder.Build(), null, _backgroundHandler);
+
+            _isManualFocusLocked = false;
+            System.Diagnostics.Debug.WriteLine("[Camera2] 已恢复自动对焦");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Camera2] 恢复自动对焦失败: {ex.Message}");
+        }
+    }
+
     internal void ApplyZoom(float scaleFactor)
     {
         if (_sensorArraySize == null || _previewRequestBuilder == null || _captureSession == null)
@@ -441,6 +569,13 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
                 System.Diagnostics.Debug.WriteLine($"[Camera2] 图像捕获成功: {bytes.Length} 字节");
 
                 _handler._isCapturing = false;
+
+                // 拍照后恢复自动对焦
+                if (_handler._isManualFocusLocked)
+                {
+                    _handler.ResetToAutoFocus();
+                }
+
                 _handler.VirtualView?.OnPhotoCaptured(bytes);
             }
             catch (Exception ex)
@@ -466,6 +601,38 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
         public bool OnScaleBegin(ScaleGestureDetector detector) => true;
 
         public void OnScaleEnd(ScaleGestureDetector detector) { }
+    }
+
+    private class TapListener : Java.Lang.Object, GestureDetector.IOnGestureListener
+    {
+        private readonly CameraPreviewHandler _handler;
+
+        public TapListener(CameraPreviewHandler handler) => _handler = handler;
+
+        public bool OnSingleTapUp(MotionEvent e)
+        {
+            _handler.TapToFocus(e.GetX(), e.GetY());
+            return true;
+        }
+
+        public bool OnDown(MotionEvent e) => true;
+        public bool OnFling(MotionEvent? e1, MotionEvent e2, float velocityX, float velocityY) => false;
+        public void OnLongPress(MotionEvent e) { }
+        public bool OnScroll(MotionEvent? e1, MotionEvent e2, float distanceX, float distanceY) => false;
+        public void OnShowPress(MotionEvent e) { }
+    }
+
+    private class FocusCallback : CameraCaptureSession.CaptureCallback
+    {
+        private readonly CameraPreviewHandler _handler;
+
+        public FocusCallback(CameraPreviewHandler handler) => _handler = handler;
+
+        public override void OnCaptureCompleted(CameraCaptureSession session, CaptureRequest request, TotalCaptureResult result)
+        {
+            var afState = result.Get(CaptureResult.ControlAfState);
+            System.Diagnostics.Debug.WriteLine($"[Camera2] 对焦状态: {afState}");
+        }
     }
 
     #endregion

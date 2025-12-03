@@ -1,9 +1,6 @@
 ﻿using Android.App;
-using Android.Content;
 using Android.Content.PM;
-using Android.OS;
 using Android.Views;
-using MauiScan.Platforms.Android.Services;
 
 namespace MauiScan
 {
@@ -11,14 +8,6 @@ namespace MauiScan
     public class MainActivity : MauiAppCompatActivity
     {
         public static event EventHandler? VolumeKeyPressed;
-
-        protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
-        {
-            base.OnActivityResult(requestCode, resultCode, data);
-
-            // 处理 ML Kit 扫描结果
-            MLKitDocumentScannerService.HandleScanResult(requestCode, resultCode, data);
-        }
 
         public override bool OnKeyDown(Keycode keyCode, KeyEvent? e)
         {
