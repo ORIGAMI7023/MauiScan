@@ -89,20 +89,52 @@ public partial class ScanPage : ContentPage
 
         try
         {
-            // 保存到 Pictures 目录
             var fileName = $"Scan_{DateTime.Now:yyyyMMdd_HHmmss}.jpg";
+
+#if ANDROID
+            // Android: 保存到系统相册
+            var savedPath = await SaveToGalleryAndroidAsync(fileName, _currentImageData);
+            StatusLabel.Text = $"✓ 已保存到相册: {fileName}";
+            await DisplayAlert("保存成功", "图片已保存到系统相册", "确定");
+#else
+            // 其他平台: 保存到应用目录
             var filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
-
             await File.WriteAllBytesAsync(filePath, _currentImageData);
-
             StatusLabel.Text = $"✓ 已保存: {fileName}";
             await DisplayAlert("保存成功", $"文件已保存到:\n{filePath}", "确定");
+#endif
         }
         catch (Exception ex)
         {
             await DisplayAlert("保存失败", ex.Message, "确定");
         }
     }
+
+#if ANDROID
+    private async Task<string> SaveToGalleryAndroidAsync(string fileName, byte[] imageData)
+    {
+        var context = Android.App.Application.Context;
+        var contentResolver = context.ContentResolver;
+
+        var contentValues = new Android.Content.ContentValues();
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, fileName);
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, "image/jpeg");
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath, Android.OS.Environment.DirectoryPictures + "/MauiScan");
+
+        var uri = contentResolver!.Insert(Android.Provider.MediaStore.Images.Media.ExternalContentUri!, contentValues);
+        if (uri == null)
+            throw new Exception("无法创建媒体文件");
+
+        using var outputStream = contentResolver.OpenOutputStream(uri);
+        if (outputStream == null)
+            throw new Exception("无法打开输出流");
+
+        await outputStream.WriteAsync(imageData, 0, imageData.Length);
+        await outputStream.FlushAsync();
+
+        return uri.ToString()!;
+    }
+#endif
 
     private async void OnRotateLeftClicked(object sender, EventArgs e)
     {
