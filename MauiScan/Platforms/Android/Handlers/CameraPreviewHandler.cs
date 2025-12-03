@@ -29,6 +29,10 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
     private bool _isCapturing;
     private int _sensorOrientation;
 
+    // 视图尺寸
+    private int _viewWidth;
+    private int _viewHeight;
+
     // 缩放相关
     private ScaleGestureDetector? _scaleGestureDetector;
     private float _maxZoom = 1f;
@@ -94,6 +98,9 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
 
     private void OpenCamera(int width, int height)
     {
+        _viewWidth = width;
+        _viewHeight = height;
+
         try
         {
             var manager = (CameraManager)Context!.GetSystemService(Context.CameraService)!;
@@ -129,6 +136,7 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
                     // 选择拍照尺寸（最高分辨率）
                     _captureSize = ChooseLargestSize(jpegSizes!);
 
+                    System.Diagnostics.Debug.WriteLine($"[Camera2] 视图尺寸: {width}x{height}");
                     System.Diagnostics.Debug.WriteLine($"[Camera2] 预览尺寸: {_previewSize.Width}x{_previewSize.Height}");
                     System.Diagnostics.Debug.WriteLine($"[Camera2] 拍照尺寸: {_captureSize.Width}x{_captureSize.Height}");
                     System.Diagnostics.Debug.WriteLine($"[Camera2] 传感器方向: {_sensorOrientation}");
@@ -143,6 +151,9 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
                 return;
             }
 
+            // 配置预览变换
+            ConfigureTransform(width, height);
+
             manager.OpenCamera(_cameraId, new CameraStateCallback(this), _backgroundHandler);
         }
         catch (Exception ex)
@@ -150,6 +161,78 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
             System.Diagnostics.Debug.WriteLine($"[Camera2] 打开相机失败: {ex.Message}");
             VirtualView?.OnError($"打开相机失败: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 获取设备当前旋转角度
+    /// </summary>
+    private int GetDeviceRotation()
+    {
+        var windowManager = Context?.GetSystemService(Context.WindowService) as IWindowManager;
+        var rotation = windowManager?.DefaultDisplay?.Rotation ?? SurfaceOrientation.Rotation0;
+
+        return rotation switch
+        {
+            SurfaceOrientation.Rotation0 => 0,
+            SurfaceOrientation.Rotation90 => 90,
+            SurfaceOrientation.Rotation180 => 180,
+            SurfaceOrientation.Rotation270 => 270,
+            _ => 0
+        };
+    }
+
+    /// <summary>
+    /// 配置 TextureView 的变换矩阵，使预览正确显示
+    /// </summary>
+    private void ConfigureTransform(int viewWidth, int viewHeight)
+    {
+        if (PlatformView == null || _previewSize == null)
+            return;
+
+        var deviceRotation = GetDeviceRotation();
+        var matrix = new Matrix();
+
+        var viewRect = new global::Android.Graphics.RectF(0, 0, viewWidth, viewHeight);
+        var bufferRect = new global::Android.Graphics.RectF(0, 0, _previewSize.Height, _previewSize.Width);
+
+        var centerX = viewRect.CenterX();
+        var centerY = viewRect.CenterY();
+
+        if (deviceRotation == 90 || deviceRotation == 270)
+        {
+            // 横屏模式
+            bufferRect.Offset(centerX - bufferRect.CenterX(), centerY - bufferRect.CenterY());
+            matrix.SetRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.Fill!);
+
+            var scale = Math.Max(
+                (float)viewHeight / _previewSize.Height,
+                (float)viewWidth / _previewSize.Width);
+
+            matrix.PostScale(scale, scale, centerX, centerY);
+            matrix.PostRotate(90 * (deviceRotation / 90 - 2), centerX, centerY);
+        }
+        else if (deviceRotation == 180)
+        {
+            matrix.PostRotate(180, centerX, centerY);
+        }
+        else
+        {
+            // 竖屏模式 (0度)
+            // 相机传感器是横向的，需要旋转并缩放以填充屏幕
+            bufferRect.Offset(centerX - bufferRect.CenterX(), centerY - bufferRect.CenterY());
+
+            // 计算缩放比例以填充整个视图（保持宽高比，可能会裁剪）
+            var scale = Math.Max(
+                (float)viewWidth / _previewSize.Height,
+                (float)viewHeight / _previewSize.Width);
+
+            matrix.SetRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.Fill!);
+            matrix.PostScale(scale, scale, centerX, centerY);
+        }
+
+        System.Diagnostics.Debug.WriteLine($"[Camera2] 配置变换: 设备旋转={deviceRotation}°");
+
+        PlatformView.SetTransform(matrix);
     }
 
     private Size ChooseOptimalPreviewSize(Size[] choices, int viewWidth, int viewHeight)
@@ -251,8 +334,10 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
             captureBuilder.Set(CaptureRequest.ControlAfMode!, (int)ControlAFMode.ContinuousPicture);
             captureBuilder.Set(CaptureRequest.ControlAeMode!, (int)ControlAEMode.OnAutoFlash);
 
-            // 设置 JPEG 方向（根据传感器方向）
-            captureBuilder.Set(CaptureRequest.JpegOrientation!, _sensorOrientation);
+            // 设置 JPEG 方向（结合设备旋转和传感器方向）
+            var jpegOrientation = GetJpegOrientation();
+            captureBuilder.Set(CaptureRequest.JpegOrientation!, jpegOrientation);
+            System.Diagnostics.Debug.WriteLine($"[Camera2] JPEG方向: {jpegOrientation}°");
 
             // 应用当前缩放
             var cropRect = GetZoomRect(_currentZoom);
@@ -269,6 +354,19 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
             System.Diagnostics.Debug.WriteLine($"[Camera2] 拍照失败: {ex.Message}");
             VirtualView?.OnError($"拍照失败: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 计算正确的 JPEG 方向
+    /// </summary>
+    private int GetJpegOrientation()
+    {
+        var deviceRotation = GetDeviceRotation();
+
+        // 对于后置摄像头：JPEG方向 = (传感器方向 + 设备旋转) % 360
+        var jpegOrientation = (_sensorOrientation + deviceRotation) % 360;
+
+        return jpegOrientation;
     }
 
     private void CloseCamera()
@@ -341,7 +439,14 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
             return true;
         }
 
-        public void OnSurfaceTextureSizeChanged(global::Android.Graphics.SurfaceTexture surface, int width, int height) { }
+        public void OnSurfaceTextureSizeChanged(global::Android.Graphics.SurfaceTexture surface, int width, int height)
+        {
+            // 视图尺寸变化时重新配置变换
+            _handler._viewWidth = width;
+            _handler._viewHeight = height;
+            _handler.ConfigureTransform(width, height);
+        }
+
         public void OnSurfaceTextureUpdated(global::Android.Graphics.SurfaceTexture surface) { }
     }
 
