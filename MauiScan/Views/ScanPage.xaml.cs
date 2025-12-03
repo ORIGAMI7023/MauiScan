@@ -46,8 +46,13 @@ public partial class ScanPage : ContentPage
 
             if (!result.IsSuccess)
             {
-                await DisplayAlert("处理失败", result.ErrorMessage ?? "未知错误", "确定");
-                StatusLabel.Text = "处理失败";
+                // 识别失败：清除预览，显示错误状态
+                _currentImageData = null;
+                PreviewImage.IsVisible = false;
+                PlaceholderLabel.IsVisible = true;
+                SaveButton.IsEnabled = false;
+                RotateButtonsGrid.IsVisible = false;
+                StatusLabel.Text = $"识别失败: {result.ErrorMessage ?? "未知错误"}";
                 return;
             }
 
@@ -93,20 +98,18 @@ public partial class ScanPage : ContentPage
 
 #if ANDROID
             // Android: 保存到系统相册
-            var savedPath = await SaveToGalleryAndroidAsync(fileName, _currentImageData);
+            await SaveToGalleryAndroidAsync(fileName, _currentImageData);
             StatusLabel.Text = $"✓ 已保存到相册: {fileName}";
-            await DisplayAlert("保存成功", "图片已保存到系统相册", "确定");
 #else
             // 其他平台: 保存到应用目录
             var filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
             await File.WriteAllBytesAsync(filePath, _currentImageData);
             StatusLabel.Text = $"✓ 已保存: {fileName}";
-            await DisplayAlert("保存成功", $"文件已保存到:\n{filePath}", "确定");
 #endif
         }
         catch (Exception ex)
         {
-            await DisplayAlert("保存失败", ex.Message, "确定");
+            StatusLabel.Text = $"保存失败: {ex.Message}";
         }
     }
 

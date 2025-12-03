@@ -4,28 +4,37 @@
              xmlns:controls="clr-namespace:MauiScan.Controls"
              x:Class="MauiScan.Views.CameraPage"
              Title="拍摄文档"
-             Shell.NavBarIsVisible="False">
+             Shell.NavBarIsVisible="False"
+             SizeChanged="OnPageSizeChanged">
 
-    <Grid BackgroundColor="Black">
+    <Grid x:Name="MainGrid" BackgroundColor="Black">
+        <!-- 竖屏布局（默认） -->
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
         <!-- 相机预览 -->
         <controls:CameraView x:Name="CameraPreview"
                              Grid.Row="0"
+                             Grid.Column="0"
                              PhotoCaptured="OnPhotoCaptured"
                              Error="OnCameraError"/>
 
         <!-- 控制栏 -->
-        <Grid Grid.Row="1"
+        <Grid x:Name="ControlBar"
+              Grid.Row="1"
+              Grid.Column="0"
               BackgroundColor="#80000000"
               Padding="20"
               HeightRequest="120">
 
             <!-- 取消按钮 -->
-            <Button Text="取消"
+            <Button x:Name="CancelButton"
+                    Text="取消"
                     TextColor="White"
                     BackgroundColor="Transparent"
                     Clicked="OnCancelClicked"
@@ -33,7 +42,8 @@
                     VerticalOptions="Center"/>
 
             <!-- 拍照按钮 -->
-            <Border WidthRequest="70"
+            <Border x:Name="CaptureButton"
+                    WidthRequest="70"
                     HeightRequest="70"
                     StrokeThickness="4"
                     Stroke="White"
@@ -58,6 +68,7 @@
         <!-- 加载指示器 -->
         <ActivityIndicator x:Name="LoadingIndicator"
                            Grid.RowSpan="2"
+                           Grid.ColumnSpan="2"
                            IsRunning="False"
                            IsVisible="False"
                            Color="White"
