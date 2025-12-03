@@ -14,6 +14,30 @@ public partial class CameraPage : ContentPage
         InitializeComponent();
     }
 
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+#if ANDROID
+        MainActivity.VolumeKeyPressed += OnVolumeKeyPressed;
+#endif
+    }
+
+    protected override void OnDisappearing()
+    {
+#if ANDROID
+        MainActivity.VolumeKeyPressed -= OnVolumeKeyPressed;
+#endif
+        base.OnDisappearing();
+    }
+
+    private void OnVolumeKeyPressed(object? sender, EventArgs e)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            OnCaptureClicked(sender, e);
+        });
+    }
+
     private void OnCaptureClicked(object? sender, EventArgs e)
     {
         if (_isCaptured) return;
