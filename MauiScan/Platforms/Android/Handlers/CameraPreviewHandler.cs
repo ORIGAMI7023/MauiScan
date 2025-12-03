@@ -40,6 +40,10 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
     private Rect? _sensorArraySize;
     private ScaleListener? _scaleListener;
 
+    // 设备物理方向监听
+    private DeviceOrientationListener? _orientationListener;
+    private int _deviceOrientation = 0; // 设备物理旋转角度 (0, 90, 180, 270)
+
     public static IPropertyMapper<CameraView, CameraPreviewHandler> Mapper =
         new PropertyMapper<CameraView, CameraPreviewHandler>(ViewHandler.ViewMapper);
 
@@ -68,13 +72,40 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
     {
         base.ConnectHandler(platformView);
         StartBackgroundThread();
+        StartOrientationListener();
     }
 
     protected override void DisconnectHandler(TextureView platformView)
     {
+        StopOrientationListener();
         CloseCamera();
         StopBackgroundThread();
         base.DisconnectHandler(platformView);
+    }
+
+    private void StartOrientationListener()
+    {
+        _orientationListener = new DeviceOrientationListener(Context!, this);
+        if (_orientationListener.CanDetectOrientation())
+        {
+            _orientationListener.Enable();
+        }
+    }
+
+    private void StopOrientationListener()
+    {
+        _orientationListener?.Disable();
+        _orientationListener = null;
+    }
+
+    internal void OnOrientationChanged(int orientation)
+    {
+        // 将连续角度转换为离散的 0, 90, 180, 270
+        if (orientation == OrientationEventListener.OrientationUnknown)
+            return;
+
+        // 四舍五入到最近的90度
+        _deviceOrientation = ((orientation + 45) / 90 * 90) % 360;
     }
 
     private void StartBackgroundThread()
@@ -358,13 +389,18 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
 
     /// <summary>
     /// 计算正确的 JPEG 方向
-    /// 始终使用传感器方向，确保照片在自然竖直持握时正确显示
+    /// 使用设备物理方向和传感器方向计算，确保照片和预览方向一致
     /// </summary>
     private int GetJpegOrientation()
     {
-        // 传感器方向就是让照片正确显示所需的旋转角度
-        // 不依赖设备当前 UI 旋转状态（可能被锁定）
-        return _sensorOrientation;
+        // 对于后置摄像头：
+        // JPEG方向 = (传感器方向 + 设备物理旋转角度) % 360
+        // 这样无论设备怎么拿，照片都和预览看到的一样
+        var jpegOrientation = (_sensorOrientation + _deviceOrientation) % 360;
+
+        System.Diagnostics.Debug.WriteLine($"[Camera2] JPEG方向计算: 传感器={_sensorOrientation}, 设备={_deviceOrientation}, 结果={jpegOrientation}");
+
+        return jpegOrientation;
     }
 
     private void CloseCamera()
@@ -569,6 +605,26 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
         public bool OnScaleBegin(ScaleGestureDetector detector) => true;
 
         public void OnScaleEnd(ScaleGestureDetector detector) { }
+    }
+
+    /// <summary>
+    /// 设备物理方向监听器
+    /// 用于获取设备真实的物理旋转角度（不受UI锁定影响）
+    /// </summary>
+    private class DeviceOrientationListener : OrientationEventListener
+    {
+        private readonly CameraPreviewHandler _handler;
+
+        public DeviceOrientationListener(Context context, CameraPreviewHandler handler)
+            : base(context, global::Android.Hardware.SensorDelay.Normal)
+        {
+            _handler = handler;
+        }
+
+        public override void OnOrientationChanged(int orientation)
+        {
+            _handler.OnOrientationChanged(orientation);
+        }
     }
 
     #endregion
