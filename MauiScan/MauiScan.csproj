@@ -62,6 +62,15 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
 	</ItemGroup>
 
+	<!-- Android CameraX (暂时禁用，有依赖冲突) -->
+	<!--
+	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+		<PackageReference Include="Xamarin.AndroidX.Camera.Camera2" Version="1.4.0.2" />
+		<PackageReference Include="Xamarin.AndroidX.Camera.Lifecycle" Version="1.4.0.2" />
+		<PackageReference Include="Xamarin.AndroidX.Camera.View" Version="1.4.0.2" />
+	</ItemGroup>
+	-->
+
 	<!-- Native C++ OpenCV 库配置 -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
 		<!-- Android: 我们的扫描库 -->

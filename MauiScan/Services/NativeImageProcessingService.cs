@@ -132,6 +132,11 @@ public class NativeImageProcessingService : IImageProcessingService
 
                 var nativeResult = new NativeScanResult
                 {
+                    ImageData = IntPtr.Zero,
+                    ImageSize = 0,
+                    Width = 0,
+                    Height = 0,
+                    Success = 0,
                     ErrorMessage = new byte[256]
                 };
 

@@ -3,7 +3,7 @@ using MauiScan.Services;
 namespace MauiScan.Platforms.Android.Services;
 
 /// <summary>
-/// Android 相机服务实现（使用 MAUI MediaPicker）
+/// Android 相机服务实现（使用系统相机）
 /// </summary>
 public class CameraService : ICameraService
 {
@@ -19,7 +19,7 @@ public class CameraService : ICameraService
                     return null;
             }
 
-            // 使用 MAUI MediaPicker 拍照
+            // 使用系统相机
             var photo = await MediaPicker.Default.CapturePhotoAsync(new MediaPickerOptions
             {
                 Title = "拍摄文档"
@@ -28,7 +28,6 @@ public class CameraService : ICameraService
             if (photo == null)
                 return null;
 
-            // 读取图像字节数据
             using var stream = await photo.OpenReadAsync();
             using var memoryStream = new MemoryStream();
             await stream.CopyToAsync(memoryStream);
