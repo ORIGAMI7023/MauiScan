@@ -8,6 +8,7 @@ public partial class ScanPage : ContentPage
     private readonly ICameraService _cameraService;
     private readonly IImageProcessingService _imageProcessingService;
     private readonly IClipboardService _clipboardService;
+    private readonly IDragDropService? _dragDropService;
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
@@ -15,13 +16,50 @@ public partial class ScanPage : ContentPage
     public ScanPage(
         ICameraService cameraService,
         IImageProcessingService imageProcessingService,
-        IClipboardService clipboardService)
+        IClipboardService clipboardService,
+        IDragDropService? dragDropService = null)
     {
         InitializeComponent();
 
         _cameraService = cameraService;
         _imageProcessingService = imageProcessingService;
         _clipboardService = clipboardService;
+        _dragDropService = dragDropService;
+
+        // 添加长按手势用于拖放
+        var longPressGesture = new TapGestureRecognizer();
+        // 使用 PointerGestureRecognizer 来处理长按（MAUI 没有内置长按手势）
+        // 改用 DragGestureRecognizer
+        var dragGesture = new DragGestureRecognizer();
+        dragGesture.DragStarting += OnDragStarting;
+        PreviewImage.GestureRecognizers.Add(dragGesture);
+    }
+
+    private void OnDragStarting(object? sender, DragStartingEventArgs e)
+    {
+        if (_currentImageData == null || _dragDropService == null)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        // 使用自定义拖放服务来支持跨应用拖放
+        _ = StartCrossAppDragAsync();
+
+        // 取消 MAUI 默认的拖放行为，使用我们自己的实现
+        e.Cancel = true;
+    }
+
+    private async Task StartCrossAppDragAsync()
+    {
+        if (_currentImageData == null || _dragDropService == null)
+            return;
+
+        var result = await _dragDropService.StartDragImageAsync(PreviewImage, _currentImageData);
+        if (result)
+        {
+            StatusLabel.Text = "拖动图片到其他应用...";
+        }
     }
 
     private async void OnCaptureClicked(object sender, EventArgs e)
