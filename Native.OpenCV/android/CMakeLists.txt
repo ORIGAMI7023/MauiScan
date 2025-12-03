@@ -8,18 +8,22 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 设置输出目录
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/../../../MauiScan/Platforms/Android/libs/${ANDROID_ABI})
 
-# OpenCV 路径（从命令行参数或默认路径获取）
+# OpenCV 路径
 if(NOT DEFINED OPENCV_ANDROID_SDK)
     set(OPENCV_ANDROID_SDK "D:/OpenCV-android-sdk" CACHE PATH "Path to OpenCV Android SDK")
 endif()
-set(OpenCV_DIR "${OPENCV_ANDROID_SDK}/sdk/native/jni")
 
-# 查找 OpenCV
-find_package(OpenCV REQUIRED)
+# OpenCV 头文件
+set(OPENCV_INCLUDE_DIR "${OPENCV_ANDROID_SDK}/sdk/native/jni/include")
+
+# OpenCV 共享库
+set(OPENCV_LIB_DIR "${OPENCV_ANDROID_SDK}/sdk/native/libs/${ANDROID_ABI}")
+add_library(opencv_java4 SHARED IMPORTED)
+set_target_properties(opencv_java4 PROPERTIES IMPORTED_LOCATION "${OPENCV_LIB_DIR}/libopencv_java4.so")
 
 # 包含目录
 include_directories(
-    ${OpenCV_INCLUDE_DIRS}
+    ${OPENCV_INCLUDE_DIR}
     ../src
 )
 
@@ -30,11 +34,12 @@ add_library(
     ../src/opencv_scanner.cpp
 )
 
-# 链接 OpenCV 库
+# 链接库（包含 C++ 标准库）
 target_link_libraries(
     opencv_scanner
-    ${OpenCV_LIBS}
+    opencv_java4
     log
+    c++_shared
 )
 
 # 设置编译选项
@@ -44,7 +49,9 @@ target_compile_options(opencv_scanner PRIVATE
     -Wextra
 )
 
-# 导出符号
-set_target_properties(opencv_scanner PROPERTIES
-    LINK_FLAGS "-Wl,--exclude-libs,ALL"
+# 复制 OpenCV 共享库到输出目录
+add_custom_command(TARGET opencv_scanner POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${OPENCV_LIB_DIR}/libopencv_java4.so"
+    "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/libopencv_java4.so"
 )

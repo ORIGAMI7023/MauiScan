@@ -64,10 +64,21 @@
 
 	<!-- Native C++ OpenCV 库配置 -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
-		<!-- Android: 引用编译后的 libopencv_scanner.so -->
-		<AndroidNativeLibrary Include="Platforms\Android\libs\$(AndroidABI)\libopencv_scanner.so">
-			<Link>lib\$(AndroidABI)\libopencv_scanner.so</Link>
-		</AndroidNativeLibrary>
+		<!-- Android: 我们的扫描库 -->
+		<AndroidNativeLibrary Include="Platforms\Android\libs\arm64-v8a\libopencv_scanner.so" Condition="'$(RuntimeIdentifier)' == 'android-arm64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\armeabi-v7a\libopencv_scanner.so" Condition="'$(RuntimeIdentifier)' == 'android-arm'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86_64\libopencv_scanner.so" Condition="'$(RuntimeIdentifier)' == 'android-x64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86\libopencv_scanner.so" Condition="'$(RuntimeIdentifier)' == 'android-x86'" />
+		<!-- Android: OpenCV 共享库 -->
+		<AndroidNativeLibrary Include="Platforms\Android\libs\arm64-v8a\libopencv_java4.so" Condition="'$(RuntimeIdentifier)' == 'android-arm64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\armeabi-v7a\libopencv_java4.so" Condition="'$(RuntimeIdentifier)' == 'android-arm'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86_64\libopencv_java4.so" Condition="'$(RuntimeIdentifier)' == 'android-x64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86\libopencv_java4.so" Condition="'$(RuntimeIdentifier)' == 'android-x86'" />
+		<!-- Android: C++ 运行时库 -->
+		<AndroidNativeLibrary Include="Platforms\Android\libs\arm64-v8a\libc++_shared.so" Condition="'$(RuntimeIdentifier)' == 'android-arm64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\armeabi-v7a\libc++_shared.so" Condition="'$(RuntimeIdentifier)' == 'android-arm'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86_64\libc++_shared.so" Condition="'$(RuntimeIdentifier)' == 'android-x64'" />
+		<AndroidNativeLibrary Include="Platforms\Android\libs\x86\libc++_shared.so" Condition="'$(RuntimeIdentifier)' == 'android-x86'" />
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
