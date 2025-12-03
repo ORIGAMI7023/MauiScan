@@ -358,15 +358,13 @@ public class CameraPreviewHandler : ViewHandler<CameraView, TextureView>
 
     /// <summary>
     /// 计算正确的 JPEG 方向
+    /// 始终使用传感器方向，确保照片在自然竖直持握时正确显示
     /// </summary>
     private int GetJpegOrientation()
     {
-        var deviceRotation = GetDeviceRotation();
-
-        // 对于后置摄像头：JPEG方向 = (传感器方向 + 设备旋转) % 360
-        var jpegOrientation = (_sensorOrientation + deviceRotation) % 360;
-
-        return jpegOrientation;
+        // 传感器方向就是让照片正确显示所需的旋转角度
+        // 不依赖设备当前 UI 旋转状态（可能被锁定）
+        return _sensorOrientation;
     }
 
     private void CloseCamera()
