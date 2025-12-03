@@ -48,6 +48,27 @@
                     HeightRequest="50"
                     CornerRadius="8"/>
 
+            <!-- 旋转按钮 -->
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="12" x:Name="RotateButtonsGrid" IsVisible="False">
+                <Button Grid.Column="0"
+                        x:Name="RotateLeftButton"
+                        Text="↺ 左转90°"
+                        Clicked="OnRotateLeftClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="1"
+                        x:Name="RotateRightButton"
+                        Text="↻ 右转90°"
+                        Clicked="OnRotateRightClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+            </Grid>
+
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                 <Button Grid.Column="0"
                         x:Name="SaveButton"

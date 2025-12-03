@@ -11,6 +11,7 @@ public partial class ScanPage : ContentPage
 
     private byte[]? _currentImageData;
     private bool _enhancementEnabled = false;
+    private int _currentRotation = 0;
 
     public ScanPage(
         ICameraService cameraService,
@@ -53,10 +54,12 @@ public partial class ScanPage : ContentPage
 
             // 3. 显示结果
             _currentImageData = result.ImageData;
+            _currentRotation = 0;
             PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
             PreviewImage.IsVisible = true;
             PlaceholderLabel.IsVisible = false;
             SaveButton.IsEnabled = true;
+            RotateButtonsGrid.IsVisible = true;
 
             StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
 
@@ -116,6 +119,70 @@ public partial class ScanPage : ContentPage
         }
 
         StatusLabel.Text = _enhancementEnabled ? "增强模式已启用（灰度+对比度）" : "增强模式已关闭";
+    }
+
+    private async void OnRotateLeftClicked(object sender, EventArgs e)
+    {
+        await RotateImageAsync(-90);
+    }
+
+    private async void OnRotateRightClicked(object sender, EventArgs e)
+    {
+        await RotateImageAsync(90);
+    }
+
+    private async Task RotateImageAsync(int degrees)
+    {
+        if (_currentImageData == null)
+            return;
+
+        try
+        {
+            SetLoading(true);
+            StatusLabel.Text = "正在旋转...";
+
+            _currentRotation = (_currentRotation + degrees + 360) % 360;
+
+            var rotatedData = await Task.Run(() => RotateJpegBytes(_currentImageData, degrees));
+            if (rotatedData != null)
+            {
+                _currentImageData = rotatedData;
+                PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(rotatedData));
+                StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
+
+                // 更新剪贴板
+                await _clipboardService.CopyImageToClipboardAsync(rotatedData);
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = $"旋转失败: {ex.Message}";
+        }
+        finally
+        {
+            SetLoading(false);
+        }
+    }
+
+    private byte[]? RotateJpegBytes(byte[] imageBytes, int degrees)
+    {
+#if ANDROID
+        using var bitmap = Android.Graphics.BitmapFactory.DecodeByteArray(imageBytes, 0, imageBytes.Length);
+        if (bitmap == null) return null;
+
+        var matrix = new Android.Graphics.Matrix();
+        matrix.PostRotate(degrees);
+
+        using var rotatedBitmap = Android.Graphics.Bitmap.CreateBitmap(
+            bitmap, 0, 0, bitmap.Width, bitmap.Height, matrix, true);
+
+        using var stream = new MemoryStream();
+        rotatedBitmap.Compress(Android.Graphics.Bitmap.CompressFormat.Jpeg, 90, stream);
+        return stream.ToArray();
+#else
+        // 其他平台暂不支持
+        return imageBytes;
+#endif
     }
 
     private void SetLoading(bool isLoading)

@@ -113,7 +113,23 @@ public class NativeImageProcessingService : IImageProcessingService
         {
             try
             {
+                System.Diagnostics.Debug.WriteLine($"[Native] 开始处理图像，大小: {imageBytes.Length} 字节");
+
+                // 测试库是否可加载
+                try
+                {
+                    var version = GetVersion();
+                    System.Diagnostics.Debug.WriteLine($"[Native] OpenCV Scanner 版本: {version}");
+                }
+                catch (Exception vex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Native] 无法获取版本: {vex.GetType().Name} - {vex.Message}");
+                    return ScanResult.Failure($"无法加载 Native 库: {vex.Message}");
+                }
+
                 var parameters = scanner_get_default_params();
+                System.Diagnostics.Debug.WriteLine($"[Native] 参数: Canny={parameters.CannyThreshold1},{parameters.CannyThreshold2}");
+
                 var nativeResult = new NativeScanResult
                 {
                     ErrorMessage = new byte[256]
@@ -127,9 +143,12 @@ public class NativeImageProcessingService : IImageProcessingService
                     ref nativeResult
                 );
 
+                System.Diagnostics.Debug.WriteLine($"[Native] 返回码: {returnCode}, Success: {nativeResult.Success}");
+
                 if (returnCode != 0 || nativeResult.Success == 0)
                 {
                     string errorMsg = GetErrorMessage(nativeResult.ErrorMessage);
+                    System.Diagnostics.Debug.WriteLine($"[Native] 错误: {errorMsg}");
                     return ScanResult.Failure(errorMsg);
                 }
 
@@ -142,6 +161,8 @@ public class NativeImageProcessingService : IImageProcessingService
 
                 var quad = ConvertToManagedQuad(nativeResult.Quad);
 
+                System.Diagnostics.Debug.WriteLine($"[Native] 成功处理，输出大小: {nativeResult.ImageSize} 字节");
+
                 return new ScanResult(
                     resultImageData,
                     nativeResult.Width,
@@ -149,9 +170,16 @@ public class NativeImageProcessingService : IImageProcessingService
                     quad
                 );
             }
+            catch (DllNotFoundException dex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Native] DllNotFoundException: {dex.Message}");
+                return ScanResult.Failure($"找不到 Native 库 libopencv_scanner.so");
+            }
             catch (Exception ex)
             {
-                return ScanResult.Failure($"Native 调用失败: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Native] Exception: {ex.GetType().Name} - {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Native] StackTrace: {ex.StackTrace}");
+                return ScanResult.Failure($"Native 调用失败: {ex.GetType().Name} - {ex.Message}");
             }
         });
     }
