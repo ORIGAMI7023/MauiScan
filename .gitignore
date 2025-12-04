@@ -30,7 +30,7 @@ bld/
 # C++ build artifacts
 Native.OpenCV/android/build-*/
 Native.OpenCV/android/build/
-Native.OpenCV/ios/build/
+Native.OpenCV/ios/build*/
 *.o
 *.so
 *.a
