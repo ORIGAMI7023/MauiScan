@@ -22,7 +22,7 @@
 		<ApplicationTitle>MauiScan</ApplicationTitle>
 
 		<!-- App Identifier -->
-		<ApplicationId>com.companyname.mauiscan</ApplicationId>
+		<ApplicationId>ORIGAMI.MauiScan</ApplicationId>
 
 		<!-- Versions -->
 		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
@@ -36,6 +36,15 @@
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+	</PropertyGroup>
+
+	<!-- iOS Code Signing -->
+	<PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
+		<CodesignKey>Apple Development: origami7023@gmail.com (XY9S54F9FM)</CodesignKey>
+		<CodesignProvision>Automatic</CodesignProvision>
+		<EnableCodeSigning>true</EnableCodeSigning>
+		<MtouchDebug>true</MtouchDebug>
+		<IpaPackageName></IpaPackageName>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -78,7 +87,14 @@
 	</ItemGroup>
 
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-ios'">
-		<!-- iOS: 引用编译后的 XCFramework -->
+		<!-- iOS: 引用 OpenCV 静态库 -->
+		<NativeReference Include="..\OpenCVSDK\ios\opencv2">
+			<Kind>Static</Kind>
+			<ForceLoad>True</ForceLoad>
+			<Frameworks>Foundation CoreGraphics UIKit Accelerate CoreMedia CoreVideo AVFoundation QuartzCore</Frameworks>
+		</NativeReference>
+
+		<!-- iOS: 引用我们的扫描库 XCFramework -->
 		<NativeReference Include="Platforms\iOS\libopencv_scanner.xcframework">
 			<Kind>Framework</Kind>
 			<ForceLoad>True</ForceLoad>

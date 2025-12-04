@@ -27,14 +27,14 @@ namespace MauiScan
             // 注册服务（使用 Native C++ OpenCV 实现）
             builder.Services.AddSingleton<IImageProcessingService, NativeImageProcessingService>();
 
+            // 注册平台特定服务
 #if ANDROID
             builder.Services.AddSingleton<ICameraService, Platforms.Android.Services.CameraService>();
             builder.Services.AddSingleton<IClipboardService, Platforms.Android.Services.ClipboardService>();
             builder.Services.AddSingleton<IDragDropService, Platforms.Android.Services.DragDropService>();
-#elif IOS
-            // iOS: 暂未实现，需要在 Mac 上开发
-            // builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
-            // builder.Services.AddSingleton<IClipboardService, Platforms.iOS.Services.ClipboardService>();
+#elif __IOS__
+            builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
+            builder.Services.AddSingleton<IClipboardService, Platforms.iOS.Services.ClipboardService>();
 #else
             // 其他平台暂不实现
 #endif

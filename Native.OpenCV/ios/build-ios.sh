@@ -1,52 +1,70 @@
 #!/bin/bash
-# iOS 构建脚本
+# iOS Native 库构建脚本 (使用 CMake)
 
 set -e
 
 # 配置
-OPENCV_IOS_FRAMEWORK="/path/to/opencv2.framework"
-SOURCE_DIR="../src"
+OPENCV_IOS_SDK="../../OpenCVSDK/ios"
 OUTPUT_DIR="../../MauiScan/Platforms/iOS"
 
-# 检查 OpenCV framework
-if [ ! -d "$OPENCV_IOS_FRAMEWORK" ]; then
-    echo "错误: 未找到 OpenCV framework: $OPENCV_IOS_FRAMEWORK"
-    echo "请下载 OpenCV iOS framework 并更新路径"
+echo "================================"
+echo "构建 iOS Native OpenCV 扫描库"
+echo "================================"
+
+# 检查 OpenCV SDK
+if [ ! -d "$OPENCV_IOS_SDK" ]; then
+    echo "错误: 未找到 OpenCV iOS SDK: $OPENCV_IOS_SDK"
     exit 1
 fi
 
-# 编译为通用库（支持真机 + 模拟器）
-echo "构建 iOS 库..."
+echo "OpenCV SDK: $OPENCV_IOS_SDK"
 
-# 真机架构 (arm64)
-xcodebuild -target opencv_scanner \
-    -configuration Release \
-    -arch arm64 \
-    -sdk iphoneos \
-    ONLY_ACTIVE_ARCH=NO \
-    BUILD_DIR="./build" \
-    OBJROOT="./build/obj" \
-    SYMROOT="./build/sym" \
-    CONFIGURATION_BUILD_DIR="./build/Release-iphoneos" \
-    clean build
+# 清理旧的构建
+echo "清理旧构建..."
+rm -rf build-iphoneos build-iphonesimulator
 
-# 模拟器架构 (x86_64, arm64)
-xcodebuild -target opencv_scanner \
-    -configuration Release \
-    -arch x86_64 -arch arm64 \
-    -sdk iphonesimulator \
-    ONLY_ACTIVE_ARCH=NO \
-    BUILD_DIR="./build" \
-    OBJROOT="./build/obj" \
-    SYMROOT="./build/sym" \
-    CONFIGURATION_BUILD_DIR="./build/Release-iphonesimulator" \
-    clean build
+# 1. 构建真机版本 (arm64)
+echo ""
+echo "=> 构建真机版本 (arm64)..."
+cmake -S . -B build-iphoneos \
+    -G Xcode \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DOPENCV_IOS_SDK="$OPENCV_IOS_SDK"
 
-# 合并为 XCFramework
-echo "创建 XCFramework..."
+cmake --build build-iphoneos --config Release
+
+# 2. 构建模拟器版本 (x86_64 + arm64)
+echo ""
+echo "=> 构建模拟器版本 (x86_64 + arm64)..."
+cmake -S . -B build-iphonesimulator \
+    -G Xcode \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+    -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+    -DCMAKE_OSX_SYSROOT=iphonesimulator \
+    -DOPENCV_IOS_SDK="$OPENCV_IOS_SDK"
+
+cmake --build build-iphonesimulator --config Release
+
+# 3. 创建 XCFramework
+echo ""
+echo "=> 创建 XCFramework..."
+rm -rf "$OUTPUT_DIR/libopencv_scanner.xcframework"
+
 xcodebuild -create-xcframework \
-    -library "./build/Release-iphoneos/libopencv_scanner.a" \
-    -library "./build/Release-iphonesimulator/libopencv_scanner.a" \
+    -library "./build-iphoneos/Release-iphoneos/libopencv_scanner.a" \
+    -library "./build-iphonesimulator/Release-iphonesimulator/libopencv_scanner.a" \
     -output "$OUTPUT_DIR/libopencv_scanner.xcframework"
 
-echo "✓ iOS 库构建完成: $OUTPUT_DIR/libopencv_scanner.xcframework"
+echo ""
+echo "================================"
+echo "✓ 构建完成!"
+echo "输出: $OUTPUT_DIR/libopencv_scanner.xcframework"
+echo "================================"
+
+# 验证符号
+echo ""
+echo "=> 验证导出符号..."
+nm -g "$OUTPUT_DIR/libopencv_scanner.xcframework/ios-arm64/libopencv_scanner.a" | grep " T " | grep scanner
