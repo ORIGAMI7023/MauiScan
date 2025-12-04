@@ -12,6 +12,7 @@ public partial class ScanPage : ContentPage
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
+    private string _debugLog = "调试日志:\n";
 
     public ScanPage(
         ICameraService cameraService,
@@ -25,6 +26,12 @@ public partial class ScanPage : ContentPage
         _imageProcessingService = imageProcessingService;
         _clipboardService = clipboardService;
         _dragDropService = dragDropService;
+
+        // 设置相机服务的日志回调
+        if (_cameraService is Platforms.iOS.Services.CameraService ioscamera)
+        {
+            ioscamera.OnDebugLog += AddDebugLog;
+        }
 
         // 添加长按手势用于拖放
         var longPressGesture = new TapGestureRecognizer();
@@ -66,21 +73,38 @@ public partial class ScanPage : ContentPage
     {
         try
         {
-            SetLoading(true);
+            AddDebugLog("OnCaptureClicked called");
             StatusLabel.Text = "正在拍摄...";
+            SetLoading(true);
 
             // 1. 拍照
-            var photoBytes = await _cameraService.TakePhotoAsync();
-            if (photoBytes == null)
+            byte[]? photoBytes = null;
+            try
             {
-                StatusLabel.Text = "拍摄已取消";
+                AddDebugLog("Calling TakePhotoAsync...");
+                photoBytes = await _cameraService.TakePhotoAsync();
+
+                if (photoBytes == null)
+                {
+                    AddDebugLog("TakePhotoAsync returned null");
+                    StatusLabel.Text = "拍摄已取消";
+                    return;
+                }
+
+                AddDebugLog($"TakePhotoAsync returned {photoBytes.Length} bytes");
+                StatusLabel.Text = $"收到 {photoBytes.Length} 字节";
+            }
+            catch (Exception ex)
+            {
+                AddDebugLog($"ERROR in TakePhotoAsync: {ex.GetType().Name}: {ex.Message}");
+                StatusLabel.Text = $"ERROR: {ex.GetType().Name}";
                 return;
             }
 
             StatusLabel.Text = "正在处理图像...";
 
             // 2. 处理图像（边缘检测 + 透视变换）
-            var result = await _imageProcessingService.ProcessScanAsync(photoBytes, false);
+            var result = await _imageProcessingService.ProcessScanAsync(photoBytes!, false);
 
             if (!result.IsSuccess)
             {
@@ -254,5 +278,34 @@ public partial class ScanPage : ContentPage
         LoadingIndicator.IsVisible = isLoading;
         CaptureButton.IsEnabled = !isLoading;
         SaveButton.IsEnabled = !isLoading && _currentImageData != null;
+    }
+
+    private void AddDebugLog(string message)
+    {
+        _debugLog += $"\n[{DateTime.Now:HH:mm:ss}] {message}";
+        Console.WriteLine($"[DEBUG] {message}");
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            DebugLabel.Text = _debugLog;
+            // 每次输出日志都自动复制到剪贴板
+            try
+            {
+                Clipboard.Default.SetTextAsync(_debugLog);
+            }
+            catch { }
+        });
+    }
+
+    private async void OnCopyLogClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            await Clipboard.Default.SetTextAsync(_debugLog);
+            await DisplayAlert("成功", "日志已复制到剪贴板", "确定");
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("错误", $"复制失败: {ex.Message}", "确定");
+        }
     }
 }

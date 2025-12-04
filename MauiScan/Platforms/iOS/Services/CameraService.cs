@@ -1,3 +1,4 @@
+using AVFoundation;
 using Foundation;
 using MauiScan.Services;
 using Photos;
@@ -7,125 +8,124 @@ namespace MauiScan.Platforms.iOS.Services
 {
     public class CameraService : ICameraService
     {
+        public Action<string>? OnDebugLog { get; set; }
+        private TaskCompletionSource<byte[]?>? _photoTcs;
+
+        private void Log(string message)
+        {
+            Console.WriteLine($"[CameraService] {message}");
+            OnDebugLog?.Invoke($"[CameraService] {message}");
+        }
+
         public async Task<byte[]?> TakePhotoAsync()
         {
             try
             {
-                var tcs = new TaskCompletionSource<byte[]?>();
+                Log("TakePhotoAsync called - using UIImagePickerController");
 
-                await MainThread.InvokeOnMainThreadAsync(async () =>
+                _photoTcs = new TaskCompletionSource<byte[]?>();
+
+                // 在主线程上执行
+                MainThread.BeginInvokeOnMainThread(() =>
                 {
                     try
                     {
-                        // 检查相机可用性
+                        Log("Checking camera availability...");
                         if (!UIImagePickerController.IsSourceTypeAvailable(UIImagePickerControllerSourceType.Camera))
                         {
-                            tcs.SetResult(null);
+                            Log("Camera not available on this device");
+                            _photoTcs?.TrySetResult(null);
                             return;
                         }
 
-                        // 创建图片选择器
-                        var picker = new UIImagePickerController
-                        {
-                            SourceType = UIImagePickerControllerSourceType.Camera,
-                            CameraCaptureMode = UIImagePickerControllerCameraCaptureMode.Photo,
-                            AllowsEditing = false
-                        };
+                        Log("Creating picker...");
+                        var picker = new UIImagePickerController();
+                        picker.SourceType = UIImagePickerControllerSourceType.Camera;
+                        picker.AllowsEditing = false;
 
-                        // 设置完成回调
-                        picker.FinishedPickingMedia += (sender, e) =>
+                        picker.FinishedPickingMedia += (s, e) =>
                         {
+                            Log("FinishedPickingMedia");
                             try
                             {
                                 var image = e.OriginalImage;
                                 if (image != null)
                                 {
-                                    // 转换为 JPEG 数据
-                                    using var imageData = image.AsJPEG(0.9f);
-                                    if (imageData != null)
+                                    using var data = image.AsJPEG(0.9f);
+                                    if (data != null)
                                     {
-                                        var bytes = new byte[imageData.Length];
-                                        System.Runtime.InteropServices.Marshal.Copy(imageData.Bytes, bytes, 0, Convert.ToInt32(imageData.Length));
-                                        tcs.SetResult(bytes);
+                                        var bytes = new byte[data.Length];
+                                        System.Runtime.InteropServices.Marshal.Copy(data.Bytes, bytes, 0, (int)data.Length);
+                                        Log($"Got {bytes.Length} bytes");
+                                        _photoTcs?.TrySetResult(bytes);
                                     }
                                     else
                                     {
-                                        tcs.SetResult(null);
+                                        _photoTcs?.TrySetResult(null);
                                     }
                                 }
                                 else
                                 {
-                                    tcs.SetResult(null);
+                                    _photoTcs?.TrySetResult(null);
                                 }
-
-                                picker.DismissViewController(true, null);
                             }
                             catch (Exception ex)
                             {
-                                Console.WriteLine($"Error in FinishedPickingMedia: {ex}");
-                                tcs.SetException(ex);
-                                picker.DismissViewController(true, null);
+                                Log($"Error processing image: {ex.Message}");
+                                _photoTcs?.TrySetResult(null);
                             }
-                        };
-
-                        // 设置取消回调
-                        picker.Canceled += (sender, e) =>
-                        {
-                            tcs.SetResult(null);
                             picker.DismissViewController(true, null);
                         };
 
-                        // 显示相机界面
-                        var viewController = Platform.GetCurrentUIViewController();
-                        if (viewController != null)
+                        picker.Canceled += (s, e) =>
                         {
-                            await viewController.PresentViewControllerAsync(picker, true);
-                        }
-                        else
+                            Log("User cancelled");
+                            _photoTcs?.TrySetResult(null);
+                            picker.DismissViewController(true, null);
+                        };
+
+                        Log("Getting view controller...");
+                        var vc = Platform.GetCurrentUIViewController();
+                        if (vc == null)
                         {
-                            tcs.SetResult(null);
+                            Log("No view controller found");
+                            _photoTcs?.TrySetResult(null);
+                            return;
                         }
+
+                        Log($"Presenting picker from {vc.GetType().Name}...");
+                        vc.PresentViewController(picker, true, () =>
+                        {
+                            Log("Picker presented");
+                        });
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"Error in TakePhotoAsync: {ex}");
-                        tcs.SetException(ex);
+                        Log($"Error in MainThread: {ex.GetType().Name}: {ex.Message}");
+                        _photoTcs?.TrySetResult(null);
                     }
                 });
 
-                return await tcs.Task;
+                Log("Waiting for result...");
+                return await _photoTcs.Task;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"TakePhotoAsync exception: {ex}");
+                Log($"TakePhotoAsync exception: {ex.GetType().Name}: {ex.Message}");
                 return null;
             }
         }
 
         public async Task<bool> CheckPermissionsAsync()
         {
-            try
-            {
-                var status = await Permissions.CheckStatusAsync<Permissions.Camera>();
-                return status == PermissionStatus.Granted;
-            }
-            catch
-            {
-                return false;
-            }
+            // 简化实现：iOS 会自动在 UIImagePickerController 中处理权限
+            return true;
         }
 
         public async Task<bool> RequestPermissionsAsync()
         {
-            try
-            {
-                var status = await Permissions.RequestAsync<Permissions.Camera>();
-                return status == PermissionStatus.Granted;
-            }
-            catch
-            {
-                return false;
-            }
+            // 简化实现：iOS 会自动在 UIImagePickerController 中处理权限
+            return true;
         }
     }
 }

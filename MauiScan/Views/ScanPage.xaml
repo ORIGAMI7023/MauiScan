@@ -4,7 +4,7 @@
              x:Class="MauiScan.Views.ScanPage"
              Title="文档扫描">
 
-    <Grid RowDefinitions="*,Auto" Padding="20">
+    <Grid RowDefinitions="*,Auto,200" Padding="20">
 
         <!-- 预览区域 -->
         <Border Grid.Row="0"
@@ -38,7 +38,7 @@
         </Border>
 
         <!-- 操作按钮 -->
-        <VerticalStackLayout Grid.Row="1" Spacing="12">
+        <VerticalStackLayout Grid.Row="1" Spacing="12" Margin="0,0,0,10">
 
             <!-- 扫描按钮 -->
             <Button x:Name="CaptureButton"
@@ -87,6 +87,39 @@
                    HorizontalOptions="Center"
                    Margin="0,8,0,0"/>
         </VerticalStackLayout>
+
+        <!-- 调试日志区域 -->
+        <Grid Grid.Row="2" RowDefinitions="Auto,*" Margin="0,10,0,0">
+            <Button Grid.Row="0"
+                    x:Name="CopyLogButton"
+                    Text="📋 复制日志"
+                    Clicked="OnCopyLogClicked"
+                    BackgroundColor="#6C757D"
+                    TextColor="White"
+                    HeightRequest="32"
+                    FontSize="12"
+                    CornerRadius="6"
+                    Padding="10,5"/>
+
+            <Border Grid.Row="1"
+                    StrokeThickness="1"
+                    Stroke="#CCC"
+                    BackgroundColor="#F9F9F9"
+                    Margin="0,5,0,0">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="8"/>
+                </Border.StrokeShape>
+
+                <ScrollView>
+                    <Label x:Name="DebugLabel"
+                           Text="调试日志:"
+                           FontSize="10"
+                           TextColor="#333"
+                           Margin="10"
+                           LineBreakMode="WordWrap"/>
+                </ScrollView>
+            </Border>
+        </Grid>
 
     </Grid>
 
