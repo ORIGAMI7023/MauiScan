@@ -93,3 +93,4 @@ TestResults/
 
 # Build script cache
 *.cache
+.claude/settings.local.json
