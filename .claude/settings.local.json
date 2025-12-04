@@ -8,7 +8,22 @@
       "Bash(unzip:*)",
       "Bash(where:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(cmake:*)",
+      "Bash(git push:*)",
+      "Bash(./build-android.bat)",
+      "Bash(ls:*)",
+      "Bash(cmd.exe /c build-android.bat)",
+      "Bash(bash -c 'cmd.exe /c \"\"build-android.bat\"\"')",
+      "Bash(git checkout:*)",
+      "Bash(dotnet nuget:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developers.google.com)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

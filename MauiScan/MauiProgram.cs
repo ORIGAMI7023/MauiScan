@@ -1,6 +1,7 @@
 ﻿using Microsoft.Extensions.Logging;
 using MauiScan.Services;
 using MauiScan.Views;
+using MauiScan.Controls;
 
 namespace MauiScan
 {
@@ -15,6 +16,12 @@ namespace MauiScan
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
+                })
+                .ConfigureMauiHandlers(handlers =>
+                {
+#if ANDROID
+                    handlers.AddHandler<CameraView, Platforms.Android.Handlers.CameraPreviewHandler>();
+#endif
                 });
 
             // 注册服务（使用 Native C++ OpenCV 实现）
@@ -23,6 +30,7 @@ namespace MauiScan
 #if ANDROID
             builder.Services.AddSingleton<ICameraService, Platforms.Android.Services.CameraService>();
             builder.Services.AddSingleton<IClipboardService, Platforms.Android.Services.ClipboardService>();
+            builder.Services.AddSingleton<IDragDropService, Platforms.Android.Services.DragDropService>();
 #elif IOS
             // iOS: 暂未实现，需要在 Mac 上开发
             // builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
@@ -33,6 +41,7 @@ namespace MauiScan
 
             // 注册页面
             builder.Services.AddTransient<ScanPage>();
+            builder.Services.AddTransient<CameraPage>();
 
 #if DEBUG
     		builder.Logging.AddDebug();

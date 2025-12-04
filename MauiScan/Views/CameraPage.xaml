@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:MauiScan.Controls"
+             x:Class="MauiScan.Views.CameraPage"
+             Title="拍摄文档"
+             Shell.NavBarIsVisible="False"
+             SizeChanged="OnPageSizeChanged">
+
+    <Grid x:Name="MainGrid" BackgroundColor="Black">
+        <!-- 竖屏布局（默认） -->
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 相机预览 -->
+        <controls:CameraView x:Name="CameraPreview"
+                             Grid.Row="0"
+                             Grid.Column="0"
+                             PhotoCaptured="OnPhotoCaptured"
+                             Error="OnCameraError"/>
+
+        <!-- 控制栏 -->
+        <Grid x:Name="ControlBar"
+              Grid.Row="1"
+              Grid.Column="0"
+              BackgroundColor="#80000000"
+              Padding="20"
+              HeightRequest="120">
+
+            <!-- 取消按钮 -->
+            <Button x:Name="CancelButton"
+                    Text="取消"
+                    TextColor="White"
+                    BackgroundColor="Transparent"
+                    Clicked="OnCancelClicked"
+                    HorizontalOptions="Start"
+                    VerticalOptions="Center"/>
+
+            <!-- 拍照按钮 -->
+            <Border x:Name="CaptureButton"
+                    WidthRequest="70"
+                    HeightRequest="70"
+                    StrokeThickness="4"
+                    Stroke="White"
+                    BackgroundColor="Transparent"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center">
+                <Border.StrokeShape>
+                    <Ellipse/>
+                </Border.StrokeShape>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnCaptureClicked"/>
+                </Border.GestureRecognizers>
+
+                <Ellipse Fill="White"
+                         WidthRequest="54"
+                         HeightRequest="54"
+                         HorizontalOptions="Center"
+                         VerticalOptions="Center"/>
+            </Border>
+        </Grid>
+
+        <!-- 加载指示器 -->
+        <ActivityIndicator x:Name="LoadingIndicator"
+                           Grid.RowSpan="2"
+                           Grid.ColumnSpan="2"
+                           IsRunning="False"
+                           IsVisible="False"
+                           Color="White"
+                           HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           WidthRequest="50"
+                           HeightRequest="50"/>
+    </Grid>
+
+</ContentPage>

@@ -8,21 +8,58 @@ public partial class ScanPage : ContentPage
     private readonly ICameraService _cameraService;
     private readonly IImageProcessingService _imageProcessingService;
     private readonly IClipboardService _clipboardService;
+    private readonly IDragDropService? _dragDropService;
 
     private byte[]? _currentImageData;
-    private bool _enhancementEnabled = false;
     private int _currentRotation = 0;
 
     public ScanPage(
         ICameraService cameraService,
         IImageProcessingService imageProcessingService,
-        IClipboardService clipboardService)
+        IClipboardService clipboardService,
+        IDragDropService? dragDropService = null)
     {
         InitializeComponent();
 
         _cameraService = cameraService;
         _imageProcessingService = imageProcessingService;
         _clipboardService = clipboardService;
+        _dragDropService = dragDropService;
+
+        // 添加长按手势用于拖放
+        var longPressGesture = new TapGestureRecognizer();
+        // 使用 PointerGestureRecognizer 来处理长按（MAUI 没有内置长按手势）
+        // 改用 DragGestureRecognizer
+        var dragGesture = new DragGestureRecognizer();
+        dragGesture.DragStarting += OnDragStarting;
+        PreviewImage.GestureRecognizers.Add(dragGesture);
+    }
+
+    private void OnDragStarting(object? sender, DragStartingEventArgs e)
+    {
+        if (_currentImageData == null || _dragDropService == null)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        // 使用自定义拖放服务来支持跨应用拖放
+        _ = StartCrossAppDragAsync();
+
+        // 取消 MAUI 默认的拖放行为，使用我们自己的实现
+        e.Cancel = true;
+    }
+
+    private async Task StartCrossAppDragAsync()
+    {
+        if (_currentImageData == null || _dragDropService == null)
+            return;
+
+        var result = await _dragDropService.StartDragImageAsync(PreviewImage, _currentImageData);
+        if (result)
+        {
+            StatusLabel.Text = "拖动图片到其他应用...";
+        }
     }
 
     private async void OnCaptureClicked(object sender, EventArgs e)
@@ -43,12 +80,17 @@ public partial class ScanPage : ContentPage
             StatusLabel.Text = "正在处理图像...";
 
             // 2. 处理图像（边缘检测 + 透视变换）
-            var result = await _imageProcessingService.ProcessScanAsync(photoBytes, _enhancementEnabled);
+            var result = await _imageProcessingService.ProcessScanAsync(photoBytes, false);
 
             if (!result.IsSuccess)
             {
-                await DisplayAlert("处理失败", result.ErrorMessage ?? "未知错误", "确定");
-                StatusLabel.Text = "处理失败";
+                // 识别失败：清除预览，显示错误状态
+                _currentImageData = null;
+                PreviewImage.IsVisible = false;
+                PlaceholderLabel.IsVisible = true;
+                SaveButton.IsEnabled = false;
+                RotateButtonsGrid.IsVisible = false;
+                StatusLabel.Text = $"识别失败: {result.ErrorMessage ?? "未知错误"}";
                 return;
             }
 
@@ -61,13 +103,15 @@ public partial class ScanPage : ContentPage
             SaveButton.IsEnabled = true;
             RotateButtonsGrid.IsVisible = true;
 
-            StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
-
             // 4. 自动复制到剪贴板
             var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
             if (copied)
             {
-                StatusLabel.Text += " | 已复制到剪贴板";
+                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height}) | 已复制到剪贴板";
+            }
+            else
+            {
+                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
             }
         }
         catch (Exception ex)
@@ -88,38 +132,50 @@ public partial class ScanPage : ContentPage
 
         try
         {
-            // 保存到 Pictures 目录
             var fileName = $"Scan_{DateTime.Now:yyyyMMdd_HHmmss}.jpg";
+
+#if ANDROID
+            // Android: 保存到系统相册
+            await SaveToGalleryAndroidAsync(fileName, _currentImageData);
+            StatusLabel.Text = $"✓ 已保存到相册: {fileName}";
+#else
+            // 其他平台: 保存到应用目录
             var filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
-
             await File.WriteAllBytesAsync(filePath, _currentImageData);
-
             StatusLabel.Text = $"✓ 已保存: {fileName}";
-            await DisplayAlert("保存成功", $"文件已保存到:\n{filePath}", "确定");
+#endif
         }
         catch (Exception ex)
         {
-            await DisplayAlert("保存失败", ex.Message, "确定");
+            StatusLabel.Text = $"保存失败: {ex.Message}";
         }
     }
 
-    private void OnEnhanceToggled(object sender, EventArgs e)
+#if ANDROID
+    private async Task<string> SaveToGalleryAndroidAsync(string fileName, byte[] imageData)
     {
-        _enhancementEnabled = !_enhancementEnabled;
+        var context = Android.App.Application.Context;
+        var contentResolver = context.ContentResolver;
 
-        if (_enhancementEnabled)
-        {
-            EnhanceButton.Text = "✨ 增强模式: 开";
-            EnhanceButton.BackgroundColor = Color.FromArgb("#FF5722");
-        }
-        else
-        {
-            EnhanceButton.Text = "✨ 增强模式: 关";
-            EnhanceButton.BackgroundColor = Color.FromArgb("#FFC107");
-        }
+        var contentValues = new Android.Content.ContentValues();
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.DisplayName, fileName);
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.MimeType, "image/jpeg");
+        contentValues.Put(Android.Provider.MediaStore.IMediaColumns.RelativePath, "Pictures/MauiScan");
 
-        StatusLabel.Text = _enhancementEnabled ? "增强模式已启用（灰度+对比度）" : "增强模式已关闭";
+        var uri = contentResolver!.Insert(Android.Provider.MediaStore.Images.Media.ExternalContentUri!, contentValues);
+        if (uri == null)
+            throw new Exception("无法创建媒体文件");
+
+        using var outputStream = contentResolver.OpenOutputStream(uri);
+        if (outputStream == null)
+            throw new Exception("无法打开输出流");
+
+        await outputStream.WriteAsync(imageData, 0, imageData.Length);
+        await outputStream.FlushAsync();
+
+        return uri.ToString()!;
     }
+#endif
 
     private async void OnRotateLeftClicked(object sender, EventArgs e)
     {
@@ -148,10 +204,17 @@ public partial class ScanPage : ContentPage
             {
                 _currentImageData = rotatedData;
                 PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(rotatedData));
-                StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
 
                 // 更新剪贴板
-                await _clipboardService.CopyImageToClipboardAsync(rotatedData);
+                var copied = await _clipboardService.CopyImageToClipboardAsync(rotatedData);
+                if (copied)
+                {
+                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90° | 已复制到剪贴板";
+                }
+                else
+                {
+                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
+                }
             }
         }
         catch (Exception ex)
@@ -191,6 +254,5 @@ public partial class ScanPage : ContentPage
         LoadingIndicator.IsVisible = isLoading;
         CaptureButton.IsEnabled = !isLoading;
         SaveButton.IsEnabled = !isLoading && _currentImageData != null;
-        EnhanceButton.IsEnabled = !isLoading;
     }
 }

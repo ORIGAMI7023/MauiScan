@@ -40,8 +40,9 @@
         <!-- 操作按钮 -->
         <VerticalStackLayout Grid.Row="1" Spacing="12">
 
+            <!-- 扫描按钮 -->
             <Button x:Name="CaptureButton"
-                    Text="📷 拍摄文档"
+                    Text="📷 扫描文档"
                     Clicked="OnCaptureClicked"
                     BackgroundColor="#512BD4"
                     TextColor="White"
@@ -69,26 +70,15 @@
                         CornerRadius="8"/>
             </Grid>
 
-            <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
-                <Button Grid.Column="0"
-                        x:Name="SaveButton"
-                        Text="💾 保存"
-                        Clicked="OnSaveClicked"
-                        BackgroundColor="#28A745"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"
-                        IsEnabled="False"/>
-
-                <Button Grid.Column="1"
-                        x:Name="EnhanceButton"
-                        Text="✨ 增强模式"
-                        Clicked="OnEnhanceToggled"
-                        BackgroundColor="#FFC107"
-                        TextColor="White"
-                        HeightRequest="50"
-                        CornerRadius="8"/>
-            </Grid>
+            <!-- 保存按钮 -->
+            <Button x:Name="SaveButton"
+                    Text="💾 保存到本地"
+                    Clicked="OnSaveClicked"
+                    BackgroundColor="#28A745"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"
+                    IsEnabled="False"/>
 
             <Label x:Name="StatusLabel"
                    Text=""

@@ -3,42 +3,22 @@ using MauiScan.Services;
 namespace MauiScan.Platforms.Android.Services;
 
 /// <summary>
-/// Android 相机服务实现（使用系统相机）
+/// Android 相机服务实现（使用自定义相机页面）
 /// </summary>
 public class CameraService : ICameraService
 {
     public async Task<byte[]?> TakePhotoAsync()
     {
-        try
+        // 检查权限
+        if (!await CheckPermissionsAsync())
         {
-            // 检查权限
-            if (!await CheckPermissionsAsync())
-            {
-                var granted = await RequestPermissionsAsync();
-                if (!granted)
-                    return null;
-            }
-
-            // 使用系统相机
-            var photo = await MediaPicker.Default.CapturePhotoAsync(new MediaPickerOptions
-            {
-                Title = "拍摄文档"
-            });
-
-            if (photo == null)
-                return null;
-
-            using var stream = await photo.OpenReadAsync();
-            using var memoryStream = new MemoryStream();
-            await stream.CopyToAsync(memoryStream);
-
-            return memoryStream.ToArray();
+            var granted = await RequestPermissionsAsync();
+            if (!granted)
+                throw new Exception("相机权限被拒绝");
         }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"拍照失败: {ex.Message}");
-            return null;
-        }
+
+        // 启动自定义相机页面并等待结果
+        return await CameraPageService.CapturePhotoAsync();
     }
 
     public async Task<bool> CheckPermissionsAsync()
@@ -51,5 +31,34 @@ public class CameraService : ICameraService
     {
         var status = await Permissions.RequestAsync<Permissions.Camera>();
         return status == PermissionStatus.Granted;
+    }
+}
+
+/// <summary>
+/// 相机页面服务 - 管理相机页面的导航和结果
+/// </summary>
+public static class CameraPageService
+{
+    private static TaskCompletionSource<byte[]?>? _captureCompletionSource;
+
+    public static async Task<byte[]?> CapturePhotoAsync()
+    {
+        _captureCompletionSource = new TaskCompletionSource<byte[]?>();
+
+        // 导航到相机页面
+        await Shell.Current.GoToAsync("camera");
+
+        // 等待拍照结果
+        return await _captureCompletionSource.Task;
+    }
+
+    public static void SetResult(byte[]? imageData)
+    {
+        _captureCompletionSource?.TrySetResult(imageData);
+    }
+
+    public static void Cancel()
+    {
+        _captureCompletionSource?.TrySetResult(null);
     }
 }

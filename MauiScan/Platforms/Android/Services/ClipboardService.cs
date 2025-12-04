@@ -35,12 +35,20 @@ public class ClipboardService : IClipboardService
                 contentUri = AndroidUri.FromFile(file);
             }
 
-            // 复制到剪贴板
+            // 复制到剪贴板（使用明确的 MIME 类型）
             var clipboardManager = (ClipboardManager?)context.GetSystemService(Context.ClipboardService);
             if (clipboardManager == null)
                 return false;
 
-            var clip = ClipData.NewUri(context.ContentResolver, "扫描图像", contentUri);
+            // 创建带有明确 MIME 类型的 ClipData
+            var mimeTypes = new string[] { "image/jpeg" };
+            var clipDescription = new ClipDescription("扫描图像", mimeTypes);
+            var item = new ClipData.Item(contentUri);
+            var clip = new ClipData(clipDescription, item);
+
+            // 授予所有应用临时读取权限
+            context.GrantUriPermission("*", contentUri, ActivityFlags.GrantReadUriPermission);
+
             clipboardManager.PrimaryClip = clip;
 
             return true;
