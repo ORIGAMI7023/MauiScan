@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="MauiScan.Server/MauiScan.Server.csproj" />
   <Project Path="MauiScan/MauiScan.csproj">
     <Deploy />
   </Project>

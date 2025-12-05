@@ -28,5 +28,26 @@
 	</array>
 	<key>XSAppIconAssets</key>
 	<string>Assets.xcassets/appicon.appiconset</string>
+	<!-- 相机权限描述 -->
+	<key>NSCameraUsageDescription</key>
+	<string>需要使用相机扫描文档</string>
+	<!-- 允许 HTTPS 访问 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>mauiscan.origami7023.net.cn</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionRequiresForwardSecrecy</key>
+				<true/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>
