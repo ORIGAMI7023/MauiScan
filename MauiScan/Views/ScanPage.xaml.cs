@@ -33,6 +33,9 @@ public partial class ScanPage : ContentPage
         // 监听来自其他设备的新扫描
         _syncService.NewScanReceived += OnNewScanReceived;
 
+        // 监听连接状态变化
+        _syncService.ConnectionStateChanged += OnConnectionStateChanged;
+
         // 添加长按手势用于拖放
         var longPressGesture = new TapGestureRecognizer();
         // 使用 PointerGestureRecognizer 来处理长按（MAUI 没有内置长按手势）
@@ -338,5 +341,22 @@ public partial class ScanPage : ContentPage
         {
             System.Diagnostics.Debug.WriteLine($"处理新扫描失败: {ex.Message}");
         }
+    }
+
+    private void OnConnectionStateChanged(bool isConnected)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (isConnected)
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Green);
+                ConnectionStatusLabel.Text = "已连接";
+            }
+            else
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
+                ConnectionStatusLabel.Text = "未连接";
+            }
+        });
     }
 }

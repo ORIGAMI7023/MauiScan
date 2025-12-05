@@ -4,10 +4,24 @@
              x:Class="MauiScan.Views.ScanPage"
              Title="文档扫描">
 
-    <Grid RowDefinitions="*,Auto" Padding="20">
+    <Grid RowDefinitions="Auto,*,Auto" Padding="20">
+
+        <!-- 服务器连接状态 -->
+        <HorizontalStackLayout Grid.Row="0" Spacing="6" Margin="0,0,0,10" HorizontalOptions="End">
+            <Ellipse x:Name="ConnectionStatusDot"
+                     WidthRequest="8"
+                     HeightRequest="8"
+                     Fill="Red"
+                     VerticalOptions="Center"/>
+            <Label x:Name="ConnectionStatusLabel"
+                   Text="未连接"
+                   FontSize="12"
+                   TextColor="#666"
+                   VerticalOptions="Center"/>
+        </HorizontalStackLayout>
 
         <!-- 预览区域 -->
-        <Border Grid.Row="0"
+        <Border Grid.Row="1"
                 StrokeThickness="2"
                 Stroke="#512BD4"
                 BackgroundColor="#F5F5F5"
@@ -38,7 +52,7 @@
         </Border>
 
         <!-- 操作按钮 -->
-        <VerticalStackLayout Grid.Row="1" Spacing="12">
+        <VerticalStackLayout Grid.Row="2" Spacing="12">
 
             <!-- 扫描按钮 -->
             <Button x:Name="CaptureButton"
