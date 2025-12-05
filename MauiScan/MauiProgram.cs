@@ -47,6 +47,7 @@ namespace MauiScan
             // 注册页面
             builder.Services.AddTransient<ScanPage>();
             builder.Services.AddTransient<CameraPage>();
+            builder.Services.AddTransient<HistoryPage>();
 
 #if DEBUG
     		builder.Logging.AddDebug();

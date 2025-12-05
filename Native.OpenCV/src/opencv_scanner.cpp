@@ -66,7 +66,53 @@ static void sort_quad_points(const std::vector<Point>& points, QuadPoints* quad)
     quad->bottom_left_y = bottom_points[0].y;
 }
 
-// 检测文档边界
+// 候选轮廓结构体
+struct ContourCandidate {
+    std::vector<Point> points;
+    double score;
+    double area;
+};
+
+// 计算轮廓置信度评分
+static double calculate_contour_score(
+    const std::vector<Point>& contour,
+    const Mat& /* edges */,  // 保留参数以便未来扩展
+    double image_area
+) {
+    double score = 0.0;
+
+    // 1. 面积分数 (0-40分)：面积占比越大越好
+    double area = contourArea(contour);
+    double area_ratio = area / image_area;
+    score += std::min(area_ratio * 100.0, 40.0);
+
+    // 2. 四边形拟合度 (0-30分)：越接近四边形越好
+    double peri = arcLength(contour, true);
+    std::vector<Point> approx;
+    approxPolyDP(contour, approx, 0.03 * peri, true);
+
+    if (approx.size() == 4) {
+        score += 30.0; // 完美四边形
+    } else if (approx.size() == 5 || approx.size() == 6) {
+        score += 20.0; // 接近四边形
+    } else if (approx.size() >= 7 && approx.size() <= 10) {
+        score += 10.0; // 勉强可用
+    }
+
+    // 3. 凸性分数 (0-15分)：凸多边形更可能是文档
+    if (isContourConvex(approx)) {
+        score += 15.0;
+    }
+
+    // 4. 边缘清晰度 (0-15分)：轮廓周长与面积比
+    double compactness = (peri * peri) / area;
+    double normalized_compactness = std::min(compactness / 50.0, 1.0);
+    score += (1.0 - normalized_compactness) * 15.0;
+
+    return score;
+}
+
+// 检测文档边界（智能评分算法）
 static bool detect_document_bounds_internal(
     const Mat& image,
     const ScannerParams* params,
@@ -99,40 +145,64 @@ static bool detect_document_bounds_internal(
             return false;
         }
 
-        // 5. 筛选最大四边形轮廓
+        // 5. 使用低阈值筛选候选轮廓（3%，避免遗漏）
         double image_area = image.cols * image.rows;
-        double min_area = image_area * params->min_contour_area_ratio;
+        double min_area = image_area * 0.03; // 降低到 3%
 
-        // 按面积降序排序
-        std::sort(contours.begin(), contours.end(), [](const std::vector<Point>& a, const std::vector<Point>& b) {
-            return contourArea(a) > contourArea(b);
-        });
+        std::vector<ContourCandidate> candidates;
 
         for (const auto& contour : contours) {
             double area = contourArea(contour);
             if (area < min_area) {
-                break;
+                continue;
             }
 
-            // 轮廓近似（放宽误差范围）
-            double peri = arcLength(contour, true);
-            std::vector<Point> approx;
-            approxPolyDP(contour, approx, 0.03 * peri, true); // 从 0.02 放宽到 0.03
+            // 计算置信度评分
+            double score = calculate_contour_score(contour, edges, image_area);
 
-            // 如果是四边形，则认为是文档边界
-            if (approx.size() == 4) {
-                sort_quad_points(approx, quad);
+            ContourCandidate candidate;
+            candidate.points = contour;
+            candidate.score = score;
+            candidate.area = area;
+
+            candidates.push_back(candidate);
+        }
+
+        if (candidates.empty()) {
+            return false;
+        }
+
+        // 6. 按评分降序排序
+        std::sort(candidates.begin(), candidates.end(),
+            [](const ContourCandidate& a, const ContourCandidate& b) {
+                return a.score > b.score;
+            });
+
+        // 7. 选择最高分的候选轮廓
+        const auto& best_candidate = candidates[0];
+
+        // 8. 置信度阈值检查：至少 40 分才认为是有效文档
+        if (best_candidate.score < 40.0) {
+            return false;
+        }
+
+        // 9. 尝试将最佳候选轮廓近似为四边形
+        double peri = arcLength(best_candidate.points, true);
+        std::vector<Point> approx;
+        approxPolyDP(best_candidate.points, approx, 0.03 * peri, true);
+
+        if (approx.size() == 4) {
+            sort_quad_points(approx, quad);
+            return true;
+        }
+
+        // 10. 如果不是四边形，尝试更宽松的近似
+        if (approx.size() >= 4 && approx.size() <= 6) {
+            std::vector<Point> approx2;
+            approxPolyDP(best_candidate.points, approx2, 0.05 * peri, true);
+            if (approx2.size() == 4) {
+                sort_quad_points(approx2, quad);
                 return true;
-            }
-
-            // 如果近似为5-6边形，尝试进一步简化
-            if (approx.size() >= 4 && approx.size() <= 6) {
-                std::vector<Point> approx2;
-                approxPolyDP(contour, approx2, 0.05 * peri, true);
-                if (approx2.size() == 4) {
-                    sort_quad_points(approx2, quad);
-                    return true;
-                }
             }
         }
 
@@ -238,26 +308,27 @@ int32_t scanner_process_scan(
 
         // 1. 检测文档边界
         QuadPoints quad;
-        if (!detect_document_bounds_internal(original, params, &quad)) {
-            std::strcpy(result->error_message, "No document bounds detected");
-            result->success = 0;
-            return -1;
-        }
+        bool bounds_detected = detect_document_bounds_internal(original, params, &quad);
 
-        // 2. 透视变换
-        Mat warped;
-        if (!apply_perspective_transform_internal(original, &quad, warped)) {
-            std::strcpy(result->error_message, "Perspective transform failed");
-            result->success = 0;
-            return -1;
-        }
-
-        // 3. 可选图像增强
         Mat final_image;
-        if (apply_enhancement) {
-            apply_enhancement_internal(warped, final_image);
+
+        if (bounds_detected) {
+            // 2. 透视变换
+            Mat warped;
+            if (!apply_perspective_transform_internal(original, &quad, warped)) {
+                // 透视变换失败，使用原图
+                final_image = original;
+            } else {
+                // 3. 可选图像增强
+                if (apply_enhancement) {
+                    apply_enhancement_internal(warped, final_image);
+                } else {
+                    final_image = warped;
+                }
+            }
         } else {
-            final_image = warped;
+            // 未检测到文档边界，返回原图
+            final_image = original;
         }
 
         // 4. 编码为 JPEG

@@ -7,9 +7,18 @@
     xmlns:views="clr-namespace:MauiScan.Views"
     Title="MauiScan">
 
-    <ShellContent
-        Title="扫描"
-        ContentTemplate="{DataTemplate views:ScanPage}"
-        Route="ScanPage" />
+    <TabBar>
+        <ShellContent
+            Title="扫描"
+            Icon="camera.png"
+            ContentTemplate="{DataTemplate views:ScanPage}"
+            Route="ScanPage" />
+
+        <ShellContent
+            Title="历史"
+            Icon="history.png"
+            ContentTemplate="{DataTemplate views:HistoryPage}"
+            Route="HistoryPage" />
+    </TabBar>
 
 </Shell>
