@@ -76,7 +76,7 @@ struct ContourCandidate {
 // 计算轮廓置信度评分
 static double calculate_contour_score(
     const std::vector<Point>& contour,
-    const Mat& edges,
+    const Mat& /* edges */,  // 保留参数以便未来扩展
     double image_area
 ) {
     double score = 0.0;
