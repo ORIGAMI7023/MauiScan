@@ -1,0 +1,23 @@
+# systemd 服务配置 - MauiScan Server (API + SignalR)
+# 路径: /etc/systemd/system/mauiscan-server.service
+# 最后更新: 2025-12-05
+
+[Unit]
+Description=MauiScan Server (API + SignalR)
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/mauiscan-server
+ExecStart=/usr/bin/dotnet /var/www/mauiscan-server/MauiScan.Server.dll
+Restart=always
+RestartSec=5
+SyslogIdentifier=mauiscan-server
+User=root
+Environment="ASPNETCORE_ENVIRONMENT=Production"
+Environment="ASPNETCORE_URLS=http://127.0.0.1:5012"
+Environment="DOTNET_PRINT_TELEMETRY_MESSAGE=false"
+Environment="Storage__ScansDirectory=/var/www/mauiscan-server/data/scans"
+Environment="Storage__MaxFileSizeMB=20"
+
+[Install]
+WantedBy=multi-user.target

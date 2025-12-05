@@ -1,5 +1,6 @@
 using MauiScan.Models;
 using MauiScan.Services;
+using MauiScan.Services.Sync;
 
 namespace MauiScan.Views;
 
@@ -9,6 +10,7 @@ public partial class ScanPage : ContentPage
     private readonly IImageProcessingService _imageProcessingService;
     private readonly IClipboardService _clipboardService;
     private readonly IDragDropService? _dragDropService;
+    private readonly ScanSyncService _syncService;
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
@@ -18,6 +20,7 @@ public partial class ScanPage : ContentPage
         ICameraService cameraService,
         IImageProcessingService imageProcessingService,
         IClipboardService clipboardService,
+        ScanSyncService syncService,
         IDragDropService? dragDropService = null)
     {
         InitializeComponent();
@@ -26,6 +29,13 @@ public partial class ScanPage : ContentPage
         _imageProcessingService = imageProcessingService;
         _clipboardService = clipboardService;
         _dragDropService = dragDropService;
+        _syncService = syncService;
+
+        // 监听来自其他设备的新扫描
+        _syncService.NewScanReceived += OnNewScanReceived;
+
+        // 监听连接状态变化
+        _syncService.ConnectionStateChanged += OnConnectionStateChanged;
 
         // 设置相机服务的日志回调
         if (_cameraService is Platforms.iOS.Services.CameraService ioscamera)
@@ -137,6 +147,9 @@ public partial class ScanPage : ContentPage
             {
                 StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
             }
+
+            // 5. 自动上传到服务器
+            _ = UploadToServerAsync(result.ImageData, result.Width, result.Height);
         }
         catch (Exception ex)
         {
@@ -307,5 +320,96 @@ public partial class ScanPage : ContentPage
         {
             await DisplayAlert("错误", $"复制失败: {ex.Message}", "确定");
         }
+    }
+
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+
+        // 页面显示时自动连接到服务器
+        if (!_syncService.IsConnected)
+        {
+            await _syncService.ConnectAsync();
+        }
+    }
+
+    protected override async void OnDisappearing()
+    {
+        base.OnDisappearing();
+
+        // 页面隐藏时断开连接以节省资源（可选）
+        // await _syncService.DisconnectAsync();
+    }
+
+    private async Task UploadToServerAsync(byte[] imageData, int width, int height)
+    {
+        try
+        {
+            var success = await _syncService.UploadScanAsync(imageData, width, height);
+            if (success)
+            {
+                System.Diagnostics.Debug.WriteLine("✓ 图片已上传到服务器");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("✗ 图片上传失败");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"上传异常: {ex.Message}");
+        }
+    }
+
+    private async void OnNewScanReceived(ScanImageDto scanImage)
+    {
+        try
+        {
+            // 在主线程上更新 UI
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                System.Diagnostics.Debug.WriteLine($"收到新扫描: {scanImage.FileName}");
+
+                // 下载图片
+                var imageData = await _syncService.DownloadScanAsync(scanImage.DownloadUrl);
+                if (imageData != null)
+                {
+                    // 显示图片
+                    _currentImageData = imageData;
+                    _currentRotation = 0;
+                    PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(imageData));
+                    PreviewImage.IsVisible = true;
+                    PlaceholderLabel.IsVisible = false;
+                    SaveButton.IsEnabled = true;
+                    RotateButtonsGrid.IsVisible = true;
+
+                    StatusLabel.Text = $"✓ 收到新扫描: {scanImage.FileName} ({scanImage.Width}×{scanImage.Height})";
+
+                    // 自动复制到剪贴板
+                    await _clipboardService.CopyImageToClipboardAsync(imageData);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"处理新扫描失败: {ex.Message}");
+        }
+    }
+
+    private void OnConnectionStateChanged(bool isConnected)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (isConnected)
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Green);
+                ConnectionStatusLabel.Text = "已连接";
+            }
+            else
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
+                ConnectionStatusLabel.Text = "未连接";
+            }
+        });
     }
 }

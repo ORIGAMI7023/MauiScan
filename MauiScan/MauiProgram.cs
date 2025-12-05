@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using MauiScan.Services;
+using MauiScan.Services.Sync;
 using MauiScan.Views;
 using MauiScan.Controls;
 
@@ -26,6 +27,10 @@ namespace MauiScan
 
             // 注册服务（使用 Native C++ OpenCV 实现）
             builder.Services.AddSingleton<IImageProcessingService, NativeImageProcessingService>();
+
+            // 注册同步服务
+            builder.Services.AddSingleton<ScanSyncService>(sp =>
+                new ScanSyncService("https://mauiscan.origami7023.net.cn"));
 
             // 注册平台特定服务
 #if ANDROID
