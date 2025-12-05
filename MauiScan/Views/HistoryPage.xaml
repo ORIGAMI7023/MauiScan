@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="MauiScan.Views.HistoryPage"
+             Title="历史记录">
+
+    <Grid RowDefinitions="Auto,*" Padding="0">
+
+        <!-- 顶部工具栏 -->
+        <Border Grid.Row="0"
+                BackgroundColor="#512BD4"
+                Padding="20,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <Label Grid.Column="0"
+                       Text="历史记录"
+                       FontSize="20"
+                       FontAttributes="Bold"
+                       TextColor="White"
+                       VerticalOptions="Center"/>
+
+                <Button Grid.Column="1"
+                        x:Name="RefreshButton"
+                        Text="🔄"
+                        FontSize="20"
+                        BackgroundColor="Transparent"
+                        TextColor="White"
+                        Clicked="OnRefreshClicked"
+                        WidthRequest="50"
+                        HeightRequest="40"/>
+            </Grid>
+        </Border>
+
+        <!-- 历史列表 -->
+        <RefreshView Grid.Row="1"
+                     x:Name="RefreshViewControl"
+                     IsRefreshing="{Binding IsRefreshing}"
+                     Command="{Binding RefreshCommand}">
+            <CollectionView x:Name="HistoryCollectionView"
+                            ItemsSource="{Binding HistoryItems}"
+                            SelectionMode="Single"
+                            SelectionChanged="OnItemSelected">
+                <CollectionView.EmptyView>
+                    <StackLayout Padding="40"
+                                 VerticalOptions="Center"
+                                 HorizontalOptions="Center">
+                        <Label Text="暂无历史记录"
+                               FontSize="16"
+                               TextColor="#999"
+                               HorizontalOptions="Center"/>
+                        <Label Text="扫描文档后将在这里显示"
+                               FontSize="14"
+                               TextColor="#CCC"
+                               HorizontalOptions="Center"
+                               Margin="0,10,0,0"/>
+                    </StackLayout>
+                </CollectionView.EmptyView>
+
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="15,10"
+                              ColumnDefinitions="100,*"
+                              ColumnSpacing="15">
+
+                            <!-- 缩略图 -->
+                            <Border Grid.Column="0"
+                                    StrokeThickness="1"
+                                    Stroke="#DDD"
+                                    BackgroundColor="#F5F5F5"
+                                    HeightRequest="100"
+                                    WidthRequest="100">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="8"/>
+                                </Border.StrokeShape>
+
+                                <Image Source="{Binding ThumbnailSource}"
+                                       Aspect="AspectFill"/>
+                            </Border>
+
+                            <!-- 信息 -->
+                            <VerticalStackLayout Grid.Column="1"
+                                                 VerticalOptions="Center"
+                                                 Spacing="8">
+                                <Label Text="{Binding ScannedAtText}"
+                                       FontSize="16"
+                                       TextColor="#333"
+                                       FontAttributes="Bold"/>
+                                <Label Text="{Binding SizeText}"
+                                       FontSize="14"
+                                       TextColor="#666"/>
+                            </VerticalStackLayout>
+
+                            <!-- 分隔线 -->
+                            <BoxView Grid.ColumnSpan="2"
+                                     HeightRequest="1"
+                                     Color="#EEE"
+                                     VerticalOptions="End"
+                                     Margin="0,0,0,-10"/>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </RefreshView>
+
+        <!-- 加载指示器 -->
+        <ActivityIndicator Grid.Row="1"
+                          x:Name="LoadingIndicator"
+                          IsRunning="False"
+                          IsVisible="False"
+                          Color="#512BD4"
+                          HorizontalOptions="Center"
+                          VerticalOptions="Center"/>
+
+    </Grid>
+
+</ContentPage>
