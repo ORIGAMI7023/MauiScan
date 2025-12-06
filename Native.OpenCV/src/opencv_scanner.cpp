@@ -81,22 +81,22 @@ static double calculate_contour_score(
 ) {
     double score = 0.0;
 
-    // 1. 面积分数 (0-40分)：面积占比越大越好
+    // 1. 面积分数 (0-30分)：面积占比越大越好（降低权重）
     double area = contourArea(contour);
     double area_ratio = area / image_area;
-    score += std::min(area_ratio * 100.0, 40.0);
+    score += std::min(area_ratio * 100.0, 30.0);
 
-    // 2. 四边形拟合度 (0-30分)：越接近四边形越好
+    // 2. 四边形拟合度 (0-40分)：越接近四边形越好（提高权重，支持透视变形）
     double peri = arcLength(contour, true);
     std::vector<Point> approx;
     approxPolyDP(contour, approx, 0.03 * peri, true);
 
     if (approx.size() == 4) {
-        score += 30.0; // 完美四边形
+        score += 40.0; // 完美四边形（包括透视拍摄的梯形）
     } else if (approx.size() == 5 || approx.size() == 6) {
-        score += 20.0; // 接近四边形
+        score += 25.0; // 接近四边形
     } else if (approx.size() >= 7 && approx.size() <= 10) {
-        score += 10.0; // 勉强可用
+        score += 12.0; // 勉强可用
     }
 
     // 3. 凸性分数 (0-15分)：凸多边形更可能是文档
@@ -133,11 +133,15 @@ static bool detect_document_bounds_internal(
         if (kernel_size % 2 == 0) kernel_size++; // 确保为奇数
         GaussianBlur(gray, blurred, Size(kernel_size, kernel_size), 0);
 
-        // 3. Canny 边缘检测
-        Mat edges;
-        Canny(blurred, edges, params->canny_threshold1, params->canny_threshold2);
+        // 3. 轻微增强对比度（提高边缘检测效果）
+        Mat enhanced;
+        blurred.convertTo(enhanced, -1, 1.15, 0); // alpha=1.15 (对比度), beta=0 (亮度)
 
-        // 4. 查找轮廓
+        // 4. Canny 边缘检测
+        Mat edges;
+        Canny(enhanced, edges, params->canny_threshold1, params->canny_threshold2);
+
+        // 5. 查找轮廓
         std::vector<std::vector<Point>> contours;
         findContours(edges, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
@@ -145,7 +149,7 @@ static bool detect_document_bounds_internal(
             return false;
         }
 
-        // 5. 使用低阈值筛选候选轮廓（3%，避免遗漏）
+        // 6. 使用低阈值筛选候选轮廓（3%，避免遗漏）
         double image_area = image.cols * image.rows;
         double min_area = image_area * 0.03; // 降低到 3%
 
@@ -172,21 +176,21 @@ static bool detect_document_bounds_internal(
             return false;
         }
 
-        // 6. 按评分降序排序
+        // 7. 按评分降序排序
         std::sort(candidates.begin(), candidates.end(),
             [](const ContourCandidate& a, const ContourCandidate& b) {
                 return a.score > b.score;
             });
 
-        // 7. 选择最高分的候选轮廓
+        // 8. 选择最高分的候选轮廓
         const auto& best_candidate = candidates[0];
 
-        // 8. 置信度阈值检查：至少 40 分才认为是有效文档
-        if (best_candidate.score < 40.0) {
+        // 9. 置信度阈值检查：至少 38 分才认为是有效文档（降低阈值提高识别率）
+        if (best_candidate.score < 38.0) {
             return false;
         }
 
-        // 9. 尝试将最佳候选轮廓近似为四边形
+        // 10. 尝试将最佳候选轮廓近似为四边形
         double peri = arcLength(best_candidate.points, true);
         std::vector<Point> approx;
         approxPolyDP(best_candidate.points, approx, 0.03 * peri, true);
@@ -196,7 +200,7 @@ static bool detect_document_bounds_internal(
             return true;
         }
 
-        // 10. 如果不是四边形，尝试更宽松的近似
+        // 11. 如果不是四边形，尝试更宽松的近似
         if (approx.size() >= 4 && approx.size() <= 6) {
             std::vector<Point> approx2;
             approxPolyDP(best_candidate.points, approx2, 0.05 * peri, true);

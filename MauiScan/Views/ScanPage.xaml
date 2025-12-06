@@ -63,6 +63,16 @@
                     HeightRequest="50"
                     CornerRadius="8"/>
 
+            <!-- 手动标注按钮（仅 Android 识别失败时显示） -->
+            <Button x:Name="ManualAnnotationButton"
+                    Text="✍️ 手动标注文档边界"
+                    Clicked="OnManualAnnotationClicked"
+                    BackgroundColor="#FF9800"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"
+                    IsVisible="False"/>
+
             <!-- 旋转按钮 -->
             <Grid ColumnDefinitions="*,*" ColumnSpacing="12" x:Name="RotateButtonsGrid" IsVisible="False">
                 <Button Grid.Column="0"

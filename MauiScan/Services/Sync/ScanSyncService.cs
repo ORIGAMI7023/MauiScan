@@ -165,4 +165,51 @@ public class ScanSyncService
             _hubConnection = null;
         }
     }
+
+    /// <summary>
+    /// 上传训练数据（手动标注的原图 + 角点坐标）
+    /// </summary>
+    public async Task<bool> UploadTrainingDataAsync(byte[] originalImage, float[] corners, byte[] processedImage)
+    {
+        try
+        {
+            using var content = new MultipartFormDataContent();
+
+            // 添加原图
+            var originalImageContent = new ByteArrayContent(originalImage);
+            originalImageContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/jpeg");
+            content.Add(originalImageContent, "originalImage", $"training_{DateTime.Now:yyyyMMdd_HHmmss}_original.jpg");
+
+            // 添加处理后的图片（用于验证）
+            var processedImageContent = new ByteArrayContent(processedImage);
+            processedImageContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/jpeg");
+            content.Add(processedImageContent, "processedImage", $"training_{DateTime.Now:yyyyMMdd_HHmmss}_processed.jpg");
+
+            // 添加角点坐标
+            content.Add(new StringContent(string.Join(",", corners)), "corners");
+
+            // 添加设备信息
+            content.Add(new StringContent(DeviceInfo.Current.Model), "deviceModel");
+            content.Add(new StringContent(DeviceInfo.Current.Platform.ToString()), "devicePlatform");
+
+            var response = await _httpClient.PostAsync("/api/training/upload", content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                System.Diagnostics.Debug.WriteLine("训练数据上传成功");
+                return true;
+            }
+            else
+            {
+                var error = await response.Content.ReadAsStringAsync();
+                System.Diagnostics.Debug.WriteLine($"训练数据上传失败: {response.StatusCode}, {error}");
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"训练数据上传异常: {ex.Message}");
+            return false;
+        }
+    }
 }

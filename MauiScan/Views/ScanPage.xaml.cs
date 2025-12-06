@@ -14,6 +14,7 @@ public partial class ScanPage : ContentPage
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
+    private byte[]? _originalPhotoBytes; // 保存原始拍照图片（用于识别失败时的手动标注）
 
     public ScanPage(
         ICameraService cameraService,
@@ -87,6 +88,9 @@ public partial class ScanPage : ContentPage
                 return;
             }
 
+            // 保存原图（用于手动标注）
+            _originalPhotoBytes = photoBytes;
+
             StatusLabel.Text = "正在处理图像...";
 
             // 2. 处理图像（边缘检测 + 透视变换）
@@ -94,11 +98,37 @@ public partial class ScanPage : ContentPage
 
             if (!result.IsSuccess)
             {
-                StatusLabel.Text = $"处理失败: {result.ErrorMessage ?? "未知错误"}";
+                // 识别失败：显示原图 + 手动标注按钮（仅 Android）
+                StatusLabel.Text = $"自动识别失败 - {result.ErrorMessage ?? "未知错误"}";
+
+#if ANDROID
+                // 显示原图
+                _currentImageData = photoBytes;
+                PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(photoBytes));
+                PreviewImage.IsVisible = true;
+                PlaceholderLabel.IsVisible = false;
+
+                // 显示手动标注按钮
+                ManualAnnotationButton.IsVisible = true;
+                SaveButton.IsEnabled = false;
+                RotateButtonsGrid.IsVisible = false;
+#else
+                // 其他平台：清空预览
+                _currentImageData = null;
+                PreviewImage.IsVisible = false;
+                PlaceholderLabel.IsVisible = true;
+                SaveButton.IsEnabled = false;
+                RotateButtonsGrid.IsVisible = false;
+#endif
                 return;
             }
 
-            // 3. 显示结果
+            // 3. 识别成功：隐藏手动标注按钮
+#if ANDROID
+            ManualAnnotationButton.IsVisible = false;
+#endif
+
+            // 4. 显示结果
             _currentImageData = result.ImageData;
             _currentRotation = 0;
             PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
@@ -194,6 +224,94 @@ public partial class ScanPage : ContentPage
         await RotateImageAsync(90);
     }
 
+    private async void OnManualAnnotationClicked(object sender, EventArgs e)
+    {
+#if ANDROID
+        if (_originalPhotoBytes == null)
+        {
+            StatusLabel.Text = "没有可标注的图片";
+            return;
+        }
+
+        try
+        {
+            // 启动 Android 平台特定的手动标注 Activity
+            var manualAnnotationService = Handler?.MauiContext?.Services.GetService<IManualAnnotationService>();
+            if (manualAnnotationService == null)
+            {
+                await DisplayAlert("错误", "手动标注服务不可用", "确定");
+                return;
+            }
+
+            StatusLabel.Text = "启动手动标注...";
+
+            // 调用手动标注服务
+            var annotationResult = await manualAnnotationService.AnnotateAsync(_originalPhotoBytes);
+
+            if (annotationResult != null && annotationResult.Success)
+            {
+                // 标注成功：显示扣出的文档
+                _currentImageData = annotationResult.ProcessedImageData;
+                _currentRotation = 0;
+                PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(annotationResult.ProcessedImageData));
+                PreviewImage.IsVisible = true;
+                PlaceholderLabel.IsVisible = false;
+                SaveButton.IsEnabled = true;
+                RotateButtonsGrid.IsVisible = true;
+                ManualAnnotationButton.IsVisible = false;
+
+                // 自动复制到剪贴板
+                var copied = await _clipboardService.CopyImageToClipboardAsync(annotationResult.ProcessedImageData);
+                if (copied)
+                {
+                    StatusLabel.Text = $"✓ 手动标注成功 ({annotationResult.Width}×{annotationResult.Height}) | 已复制到剪贴板";
+                }
+                else
+                {
+                    StatusLabel.Text = $"✓ 手动标注成功 ({annotationResult.Width}×{annotationResult.Height})";
+                }
+
+                // 上传到服务器
+                _ = UploadToServerAsync(annotationResult.ProcessedImageData, annotationResult.Width, annotationResult.Height);
+
+                // 上传训练数据（原图 + 标注信息）
+                _ = UploadTrainingDataAsync(_originalPhotoBytes, annotationResult.Corners, annotationResult.ProcessedImageData);
+            }
+            else
+            {
+                StatusLabel.Text = "手动标注已取消";
+            }
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("错误", $"手动标注失败: {ex.Message}", "确定");
+            StatusLabel.Text = "手动标注失败";
+        }
+#endif
+    }
+
+    private async Task UploadTrainingDataAsync(byte[] originalImage, float[] corners, byte[] processedImage)
+    {
+        try
+        {
+            System.Diagnostics.Debug.WriteLine("开始上传训练数据...");
+            var success = await _syncService.UploadTrainingDataAsync(originalImage, corners, processedImage);
+
+            if (success)
+            {
+                System.Diagnostics.Debug.WriteLine("✓ 训练数据上传成功");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine("✗ 训练数据上传失败");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"上传训练数据异常: {ex.Message}");
+        }
+    }
+
     private async Task RotateImageAsync(int degrees)
     {
         if (_currentImageData == null)
@@ -271,6 +389,47 @@ public partial class ScanPage : ContentPage
         if (!_syncService.IsConnected)
         {
             await _syncService.ConnectAsync();
+
+            // 连接成功后，自动获取服务器上的最新图片
+            await LoadLatestScanFromServerAsync();
+        }
+    }
+
+    private async Task LoadLatestScanFromServerAsync()
+    {
+        try
+        {
+            var recentScans = await _syncService.GetRecentScansAsync(1);
+
+            if (recentScans.Count > 0)
+            {
+                var latestScan = recentScans[0];
+
+                // 下载最新的图片
+                var imageData = await _syncService.DownloadScanAsync(latestScan.DownloadUrl);
+
+                if (imageData != null)
+                {
+                    // 显示图片
+                    _currentImageData = imageData;
+                    _currentRotation = 0;
+                    PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(imageData));
+                    PreviewImage.IsVisible = true;
+                    PlaceholderLabel.IsVisible = false;
+                    SaveButton.IsEnabled = true;
+                    RotateButtonsGrid.IsVisible = true;
+
+                    StatusLabel.Text = $"✓ 已加载最新扫描: {latestScan.Width}×{latestScan.Height}";
+
+                    // 自动复制到剪贴板
+                    await _clipboardService.CopyImageToClipboardAsync(imageData);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"加载最新扫描失败: {ex.Message}");
+            // 静默失败，不影响用户体验
         }
     }
 

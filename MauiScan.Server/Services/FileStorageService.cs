@@ -47,7 +47,7 @@ public class FileStorageService : IFileStorageService
 
         var fileInfo = new FileInfo(filePath);
 
-        return new ScanImageDto
+        var scanImage = new ScanImageDto
         {
             FileName = fileName,
             FileSize = fileInfo.Length,
@@ -56,6 +56,11 @@ public class FileStorageService : IFileStorageService
             ScannedAt = DateTime.UtcNow,
             DownloadUrl = $"/api/scans/{fileName}"
         };
+
+        // 保存元数据到 JSON 文件
+        await SaveMetadataAsync(fileName, scanImage);
+
+        return scanImage;
     }
 
     public async Task<(byte[] fileData, string contentType)?> GetFileAsync(string fileName)
@@ -95,19 +100,50 @@ public class FileStorageService : IFileStorageService
 
         foreach (var file in files)
         {
-            // 尝试从文件名解析宽高（如果有元数据文件）
-            // 这里简化处理，返回默认值
-            result.Add(new ScanImageDto
+            // 尝试加载元数据，如果不存在则使用默认值
+            var metadata = await LoadMetadataAsync(file.Name);
+
+            result.Add(metadata ?? new ScanImageDto
             {
                 FileName = file.Name,
                 FileSize = file.Length,
-                Width = 0, // 简化版不存储尺寸
+                Width = 0,
                 Height = 0,
                 ScannedAt = file.LastWriteTimeUtc,
                 DownloadUrl = $"/api/scans/{file.Name}"
             });
         }
 
-        return await Task.FromResult(result);
+        return result;
+    }
+
+    private async Task SaveMetadataAsync(string fileName, ScanImageDto scanImage)
+    {
+        var metadataPath = Path.Combine(_storageDirectory, $"{fileName}.json");
+        var json = System.Text.Json.JsonSerializer.Serialize(scanImage, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+        await File.WriteAllTextAsync(metadataPath, json);
+    }
+
+    private async Task<ScanImageDto?> LoadMetadataAsync(string fileName)
+    {
+        var metadataPath = Path.Combine(_storageDirectory, $"{fileName}.json");
+
+        if (!File.Exists(metadataPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(metadataPath);
+            return System.Text.Json.JsonSerializer.Deserialize<ScanImageDto>(json);
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

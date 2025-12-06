@@ -81,7 +81,30 @@ public class NativeImageProcessingService : IImageProcessingService
     private static extern void scanner_free_result(ref NativeScanResult result);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int scanner_apply_transform(
+        byte[] inputData,
+        int inputSize,
+        ref NativeQuadPoints quad,
+        int applyEnhancement,
+        int jpegQuality,
+        ref NativeScanResult result
+    );
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr scanner_get_version();
+
+    // 公开的 QuadPoints 类型（用于手动标注）
+    public class QuadPoints
+    {
+        public float TopLeftX { get; set; }
+        public float TopLeftY { get; set; }
+        public float TopRightX { get; set; }
+        public float TopRightY { get; set; }
+        public float BottomRightX { get; set; }
+        public float BottomRightY { get; set; }
+        public float BottomLeftX { get; set; }
+        public float BottomLeftY { get; set; }
+    }
 
     // 辅助方法
 
@@ -240,6 +263,73 @@ public class NativeImageProcessingService : IImageProcessingService
         catch
         {
             return "Unknown";
+        }
+    }
+
+    /// <summary>
+    /// 对图片应用透视变换（用于手动标注）
+    /// </summary>
+    public ScanResult ApplyPerspectiveTransform(byte[] imageBytes, QuadPoints userQuad, bool applyEnhancement = false)
+    {
+        try
+        {
+            // 转换用户坐标到 Native 坐标
+            var nativeQuad = new NativeQuadPoints
+            {
+                TopLeftX = (int)userQuad.TopLeftX,
+                TopLeftY = (int)userQuad.TopLeftY,
+                TopRightX = (int)userQuad.TopRightX,
+                TopRightY = (int)userQuad.TopRightY,
+                BottomRightX = (int)userQuad.BottomRightX,
+                BottomRightY = (int)userQuad.BottomRightY,
+                BottomLeftX = (int)userQuad.BottomLeftX,
+                BottomLeftY = (int)userQuad.BottomLeftY
+            };
+
+            var nativeResult = new NativeScanResult
+            {
+                ImageData = IntPtr.Zero,
+                ImageSize = 0,
+                Width = 0,
+                Height = 0,
+                Success = 0,
+                ErrorMessage = new byte[256]
+            };
+
+            int returnCode = scanner_apply_transform(
+                imageBytes,
+                imageBytes.Length,
+                ref nativeQuad,
+                applyEnhancement ? 1 : 0,
+                95, // JPEG quality
+                ref nativeResult
+            );
+
+            if (returnCode != 0 || nativeResult.Success == 0)
+            {
+                string errorMsg = GetErrorMessage(nativeResult.ErrorMessage);
+                return ScanResult.Failure(errorMsg);
+            }
+
+            // 从非托管内存复制图像数据
+            byte[] resultImageData = new byte[nativeResult.ImageSize];
+            Marshal.Copy(nativeResult.ImageData, resultImageData, 0, nativeResult.ImageSize);
+
+            // 释放 Native 内存
+            scanner_free_result(ref nativeResult);
+
+            var quad = ConvertToManagedQuad(nativeResult.Quad);
+
+            return new ScanResult(
+                resultImageData,
+                nativeResult.Width,
+                nativeResult.Height,
+                quad
+            );
+        }
+        catch (Exception ex)
+        {
+            return ScanResult.Failure($"透视变换失败: {ex.Message}");
         }
     }
 }

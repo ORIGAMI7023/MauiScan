@@ -37,6 +37,7 @@ namespace MauiScan
             builder.Services.AddSingleton<ICameraService, Platforms.Android.Services.CameraService>();
             builder.Services.AddSingleton<IClipboardService, Platforms.Android.Services.ClipboardService>();
             builder.Services.AddSingleton<IDragDropService, Platforms.Android.Services.DragDropService>();
+            builder.Services.AddSingleton<IManualAnnotationService, Platforms.Android.Services.ManualAnnotationService>();
 #elif __IOS__
             builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
             builder.Services.AddSingleton<IClipboardService, Platforms.iOS.Services.ClipboardService>();
