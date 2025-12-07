@@ -469,3 +469,204 @@ void scanner_free_result(ScanResult* result) {
 const char* scanner_get_version(void) {
     return SCANNER_VERSION;
 }
+
+// ========== Corner Refinement Implementation ==========
+
+// 辅助函数：精修单个角点
+static bool refine_single_corner(
+    const Mat& gray_image,
+    float ml_x,
+    float ml_y,
+    float& refined_x,
+    float& refined_y
+) {
+    const int patch_size = 64; // 搜索窗口大小
+    const int half_patch = patch_size / 2;
+
+    try {
+        // 1. 裁剪 patch（确保不越界）
+        int center_x = static_cast<int>(ml_x);
+        int center_y = static_cast<int>(ml_y);
+
+        int x1 = std::max(0, center_x - half_patch);
+        int y1 = std::max(0, center_y - half_patch);
+        int x2 = std::min(gray_image.cols, center_x + half_patch);
+        int y2 = std::min(gray_image.rows, center_y + half_patch);
+
+        if (x2 - x1 < 20 || y2 - y1 < 20) {
+            return false; // Patch 太小
+        }
+
+        Mat patch = gray_image(Rect(x1, y1, x2 - x1, y2 - y1));
+
+        // 2. Canny 边缘检测
+        Mat edges;
+        Canny(patch, edges, 50, 150, 3);
+
+        // 3. 霍夫直线检测
+        std::vector<Vec4i> lines;
+        HoughLinesP(edges, lines, 1, CV_PI / 180, 30, 20, 5);
+
+        if (lines.size() < 2) {
+            return false; // 检测到的直线太少
+        }
+
+        // 4. 直线聚类（水平 vs 垂直）
+        std::vector<Vec4i> horizontal_lines;
+        std::vector<Vec4i> vertical_lines;
+
+        for (const auto& line : lines) {
+            int dx = std::abs(line[2] - line[0]);
+            int dy = std::abs(line[3] - line[1]);
+
+            if (dx > dy) {
+                horizontal_lines.push_back(line);
+            } else {
+                vertical_lines.push_back(line);
+            }
+        }
+
+        if (horizontal_lines.empty() || vertical_lines.empty()) {
+            return false; // 没有找到两组直线
+        }
+
+        // 5. 拟合直线（最小二乘法）
+        auto fit_line = [](const std::vector<Vec4i>& lines) -> std::pair<float, float> {
+            std::vector<Point2f> points;
+            for (const auto& line : lines) {
+                points.push_back(Point2f(line[0], line[1]));
+                points.push_back(Point2f(line[2], line[3]));
+            }
+
+            float avg_x = 0, avg_y = 0;
+            for (const auto& p : points) {
+                avg_x += p.x;
+                avg_y += p.y;
+            }
+            avg_x /= points.size();
+            avg_y /= points.size();
+
+            float numerator = 0, denominator = 0;
+            for (const auto& p : points) {
+                numerator += (p.x - avg_x) * (p.y - avg_y);
+                denominator += (p.x - avg_x) * (p.x - avg_x);
+            }
+
+            if (std::abs(denominator) < 1e-6) {
+                return {0, 0}; // 失败
+            }
+
+            float k = numerator / denominator;
+            float b = avg_y - k * avg_x;
+            return {k, b};
+        };
+
+        auto h_line = fit_line(horizontal_lines);
+        auto v_line = fit_line(vertical_lines);
+
+        if (std::abs(h_line.first) < 1e-6 || std::abs(v_line.first) < 1e-6) {
+            return false;
+        }
+
+        // 6. 计算交点
+        // h_line: y = k1*x + b1
+        // v_line: y = k2*x + b2
+        float k1 = h_line.first, b1 = h_line.second;
+        float k2 = v_line.first, b2 = v_line.second;
+
+        if (std::abs(k1 - k2) < 1e-6) {
+            return false; // 平行线
+        }
+
+        float x = (b2 - b1) / (k1 - k2);
+        float y = k1 * x + b1;
+
+        // 7. 转换回原图坐标
+        refined_x = x1 + x;
+        refined_y = y1 + y;
+
+        // 8. 验证精修结果（距离 ML 预测不能太远）
+        float distance = std::sqrt(
+            (refined_x - ml_x) * (refined_x - ml_x) +
+            (refined_y - ml_y) * (refined_y - ml_y)
+        );
+
+        if (distance > patch_size) {
+            return false; // 超出搜索范围
+        }
+
+        return true;
+    } catch (const cv::Exception&) {
+        return false;
+    }
+}
+
+int32_t scanner_refine_corners(
+    const uint8_t* input_data,
+    int32_t input_size,
+    const QuadPointsF* ml_quad,
+    QuadPointsF* refined_quad
+) {
+    if (!input_data || input_size <= 0 || !ml_quad || !refined_quad) {
+        return 0;
+    }
+
+    try {
+        // 解码图像为灰度图
+        std::vector<uint8_t> buffer(input_data, input_data + input_size);
+        Mat image = imdecode(buffer, IMREAD_GRAYSCALE);
+
+        if (image.empty()) {
+            // 解码失败，直接返回原始坐标
+            *refined_quad = *ml_quad;
+            return 0;
+        }
+
+        // 初始化为 ML 预测的坐标
+        *refined_quad = *ml_quad;
+
+        int success_count = 0;
+
+        // 精修左上角
+        float tl_x, tl_y;
+        if (refine_single_corner(image, ml_quad->top_left_x, ml_quad->top_left_y, tl_x, tl_y)) {
+            refined_quad->top_left_x = tl_x;
+            refined_quad->top_left_y = tl_y;
+            success_count++;
+        }
+
+        // 精修右上角
+        float tr_x, tr_y;
+        if (refine_single_corner(image, ml_quad->top_right_x, ml_quad->top_right_y, tr_x, tr_y)) {
+            refined_quad->top_right_x = tr_x;
+            refined_quad->top_right_y = tr_y;
+            success_count++;
+        }
+
+        // 精修右下角
+        float br_x, br_y;
+        if (refine_single_corner(image, ml_quad->bottom_right_x, ml_quad->bottom_right_y, br_x, br_y)) {
+            refined_quad->bottom_right_x = br_x;
+            refined_quad->bottom_right_y = br_y;
+            success_count++;
+        }
+
+        // 精修左下角
+        float bl_x, bl_y;
+        if (refine_single_corner(image, ml_quad->bottom_left_x, ml_quad->bottom_left_y, bl_x, bl_y)) {
+            refined_quad->bottom_left_x = bl_x;
+            refined_quad->bottom_left_y = bl_y;
+            success_count++;
+        }
+
+        // 如果至少成功精修 2 个角点，认为精修成功
+        return (success_count >= 2) ? 1 : 0;
+    } catch (const cv::Exception&) {
+        // 精修失败，返回原始坐标
+        *refined_quad = *ml_quad;
+        return 0;
+    } catch (...) {
+        *refined_quad = *ml_quad;
+        return 0;
+    }
+}

@@ -35,6 +35,18 @@ typedef struct {
     int32_t bottom_left_y;
 } QuadPoints;
 
+// 浮点精度的四边形顶点（用于 ML 角点精修）
+typedef struct {
+    float top_left_x;
+    float top_left_y;
+    float top_right_x;
+    float top_right_y;
+    float bottom_right_x;
+    float bottom_right_y;
+    float bottom_left_x;
+    float bottom_left_y;
+} QuadPointsF;
+
 // 扫描结果结构
 typedef struct {
     uint8_t* image_data;      // JPEG 编码后的图像数据
@@ -123,6 +135,22 @@ SCANNER_API void scanner_free_result(ScanResult* result);
  * 获取库版本信息
  */
 SCANNER_API const char* scanner_get_version(void);
+
+/**
+ * 精修 ML 预测的角点（使用传统 CV 方法达到亚像素精度）
+ *
+ * @param input_data    输入图像数据（JPEG/PNG 编码）
+ * @param input_size    输入数据大小
+ * @param ml_quad       ML 预测的粗略角点（浮点坐标）
+ * @param refined_quad  输出精修后的角点（浮点坐标）
+ * @return              1=成功精修, 0=精修失败（返回原始坐标）
+ */
+SCANNER_API int32_t scanner_refine_corners(
+    const uint8_t* input_data,
+    int32_t input_size,
+    const QuadPointsF* ml_quad,
+    QuadPointsF* refined_quad
+);
 
 #ifdef __cplusplus
 }

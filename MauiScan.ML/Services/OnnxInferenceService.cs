@@ -753,9 +753,91 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
         return new Point2f(x, y);
     }
 
+#elif IOS || MACCATALYST
+    // iOS/MacCatalyst: 使用 Native OpenCV 精修
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativeQuadPointsF
+    {
+        public float TopLeftX;
+        public float TopLeftY;
+        public float TopRightX;
+        public float TopRightY;
+        public float BottomRightX;
+        public float BottomRightY;
+        public float BottomLeftX;
+        public float BottomLeftY;
+    }
+
+    [System.Runtime.InteropServices.DllImport("__Internal", CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+    private static extern int scanner_refine_corners(
+        byte[] inputData,
+        int inputSize,
+        ref NativeQuadPointsF mlQuad,
+        ref NativeQuadPointsF refinedQuad
+    );
+
+    /// <summary>
+    /// 精修ML预测的角点（iOS Native OpenCV 实现）
+    /// </summary>
+    private QuadrilateralPoints RefineCorners(
+        QuadrilateralPoints mlCorners,
+        byte[] imageBytes,
+        int originalWidth,
+        int originalHeight)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Refinement] Starting iOS Native corner refinement on {originalWidth}x{originalHeight} image");
+
+        try
+        {
+            // 转换为 Native 结构体
+            var mlQuad = new NativeQuadPointsF
+            {
+                TopLeftX = mlCorners.TopLeftX,
+                TopLeftY = mlCorners.TopLeftY,
+                TopRightX = mlCorners.TopRightX,
+                TopRightY = mlCorners.TopRightY,
+                BottomRightX = mlCorners.BottomRightX,
+                BottomRightY = mlCorners.BottomRightY,
+                BottomLeftX = mlCorners.BottomLeftX,
+                BottomLeftY = mlCorners.BottomLeftY
+            };
+
+            var refinedQuad = new NativeQuadPointsF();
+
+            // 调用 Native 精修函数
+            int success = scanner_refine_corners(imageBytes, imageBytes.Length, ref mlQuad, ref refinedQuad);
+
+            if (success == 1)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Refinement] iOS Native refinement succeeded");
+                return new QuadrilateralPoints
+                {
+                    TopLeftX = refinedQuad.TopLeftX,
+                    TopLeftY = refinedQuad.TopLeftY,
+                    TopRightX = refinedQuad.TopRightX,
+                    TopRightY = refinedQuad.TopRightY,
+                    BottomRightX = refinedQuad.BottomRightX,
+                    BottomRightY = refinedQuad.BottomRightY,
+                    BottomLeftX = refinedQuad.BottomLeftX,
+                    BottomLeftY = refinedQuad.BottomLeftY
+                };
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[Refinement] iOS Native refinement failed, returning ML corners");
+                return mlCorners;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Error during iOS Native refinement: {ex.Message}");
+            return mlCorners;
+        }
+    }
 #else
     /// <summary>
-    /// 精修ML预测的角点（非 Windows 平台降级实现）
+    /// 精修ML预测的角点（其他平台降级实现）
     /// </summary>
     private QuadrilateralPoints RefineCorners(
         QuadrilateralPoints mlCorners,
