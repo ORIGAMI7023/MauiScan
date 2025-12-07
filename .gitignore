@@ -44,7 +44,9 @@ OpenCV-android-sdk/
 opencv2.framework/
 
 # MAUI generated files
-MauiScan/Resources/
+# 注意：Git negation 规则要求先恢复父目录
+!MauiScan/Resources/
+MauiScan/Resources/*
 !MauiScan/Resources/AppIcon/
 !MauiScan/Resources/Splash/
 !MauiScan/Resources/Fonts/
@@ -99,3 +101,23 @@ TestResults/
 data/
 AnnotationTool/bin/
 AnnotationTool/obj/
+AnnotationTool/data_augmented/
+
+# ML Training artifacts (large files - 排除所有训练相关图片和模型)
+MauiScan.ML.Training/checkpoints/
+MauiScan.ML.Training/validation/
+MauiScan.ML.Training/overfit_results*/
+MauiScan.ML.Training/dataset/
+MauiScan.ML.Training/*.pth
+MauiScan.ML.Training/*.png
+MauiScan.ML.Training/*.jpg
+MauiScan.ML.Training/*.jpeg
+
+# 仅保留训练脚本和最终 ONNX 模型
+!MauiScan.ML.Training/*.py
+!MauiScan.ML.Training/*.json
+!MauiScan.ML.Training/*.md
+!MauiScan.ML.Training/ppt_corner_detector_final.onnx
+
+# ML Test project
+MauiScan.ML.Test/
