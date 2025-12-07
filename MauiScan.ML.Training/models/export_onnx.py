@@ -23,14 +23,14 @@ def export_to_onnx(
         input_size: 输入图片尺寸 (H, W)
         opset_version: ONNX opset 版本
     """
-    print(f"📦 开始导出 ONNX 模型...")
-    print(f"  - PyTorch 模型: {model_path}")
-    print(f"  - 输出路径: {output_path}")
-    print(f"  - 输入尺寸: {input_size}")
+    print(f"[Export] Starting ONNX export...")
+    print(f"  - PyTorch model: {model_path}")
+    print(f"  - Output path: {output_path}")
+    print(f"  - Input size: {input_size}")
 
     # 1. 加载 PyTorch 模型
     model = PPTCornerDetector(pretrained=False)
-    checkpoint = torch.load(model_path, map_location='cpu')
+    checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
 
     # 兼容不同的 checkpoint 格式
     if 'model_state_dict' in checkpoint:
@@ -43,43 +43,49 @@ def export_to_onnx(
     # 2. 创建虚拟输入
     dummy_input = torch.randn(1, 3, input_size[0], input_size[1])
 
-    # 3. 导出 ONNX
-    torch.onnx.export(
-        model,
-        dummy_input,
-        output_path,
-        export_params=True,
-        opset_version=opset_version,
-        do_constant_folding=True,
-        input_names=['input'],
-        output_names=['coordinates', 'confidence'],
-        dynamic_axes={
-            'input': {0: 'batch_size'},
-            'coordinates': {0: 'batch_size'},
-            'confidence': {0: 'batch_size'}
-        }
-    )
+    # 3. 导出 ONNX（使用旧版API避免编码问题）
+    import warnings
+    warnings.filterwarnings('ignore')
 
-    print(f"✅ ONNX 模型导出成功!")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        torch.onnx.export(
+            model,
+            dummy_input,
+            output_path,
+            export_params=True,
+            opset_version=opset_version,
+            do_constant_folding=True,
+            input_names=['input'],
+            output_names=['coordinates', 'confidence'],
+            dynamic_axes={
+                'input': {0: 'batch_size'},
+                'coordinates': {0: 'batch_size'},
+                'confidence': {0: 'batch_size'}
+            },
+            dynamo=False  # 使用旧版导出器
+        )
+
+    print(f"[OK] ONNX model exported successfully!")
 
     # 4. 验证 ONNX 模型
-    print(f"\n🔍 验证 ONNX 模型...")
+    print(f"\n[Validate] Checking ONNX model...")
     onnx_model = onnx.load(output_path)
     onnx.checker.check_model(onnx_model)
-    print(f"✅ ONNX 模型验证通过!")
+    print(f"[OK] ONNX model validation passed!")
 
     # 5. 显示模型信息
     import os
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"\n📊 模型信息:")
-    print(f"  - 文件大小: {file_size_mb:.2f} MB")
-    print(f"  - Opset 版本: {opset_version}")
-    print(f"  - 输入: input [1, 3, {input_size[0]}, {input_size[1]}]")
-    print(f"  - 输出 1: coordinates [1, 8]")
-    print(f"  - 输出 2: confidence [1, 1]")
+    print(f"\n[Info] Model information:")
+    print(f"  - File size: {file_size_mb:.2f} MB")
+    print(f"  - Opset version: {opset_version}")
+    print(f"  - Input: input [1, 3, {input_size[0]}, {input_size[1]}]")
+    print(f"  - Output 1: coordinates [1, 8]")
+    print(f"  - Output 2: confidence [1, 1]")
 
     # 6. 测试 ONNX Runtime 推理
-    print(f"\n🧪 测试 ONNX Runtime 推理...")
+    print(f"\n[Test] Testing ONNX Runtime inference...")
     import onnxruntime as ort
     import numpy as np
 
@@ -89,9 +95,9 @@ def export_to_onnx(
     outputs = session.run(None, {'input': test_input})
     coords, conf = outputs
 
-    print(f"✅ ONNX Runtime 推理成功!")
-    print(f"  - 坐标输出: {coords.shape}, 范围 [{coords.min():.3f}, {coords.max():.3f}]")
-    print(f"  - 置信度输出: {conf.shape}, 值 {conf[0, 0]:.3f}")
+    print(f"[OK] ONNX Runtime inference successful!")
+    print(f"  - Coordinates output: {coords.shape}, range [{coords.min():.3f}, {coords.max():.3f}]")
+    print(f"  - Confidence output: {conf.shape}, value {conf[0, 0]:.3f}")
 
 
 def main():

@@ -7,7 +7,10 @@ namespace MauiScan.Views;
 public partial class MLTestPage : ContentPage
 {
     private readonly IMLInferenceService _mlService;
-    private byte[]? _currentImageBytes;
+    private byte[]? _currentImageBytes;      // 512x512 缩放后的图片（用于推理）
+    private byte[]? _originalImageBytes;     // 原始图片（用于透视变换）
+    private int _originalWidth;              // 原始图片宽度
+    private int _originalHeight;             // 原始图片高度
     private string? _lastErrorMessage;
 
     public bool HasImage => _currentImageBytes != null;
@@ -140,6 +143,9 @@ public partial class MLTestPage : ContentPage
         using var stream = await fileResult.OpenReadAsync();
         using var originalStream = new MemoryStream();
         await stream.CopyToAsync(originalStream);
+
+        // 保存原始图片字节数据
+        _originalImageBytes = originalStream.ToArray();
         originalStream.Position = 0;
 
         Debug.WriteLine($"[ML Test] Original image size: {originalStream.Length / 1024.0:F1} KB");
@@ -158,6 +164,8 @@ public partial class MLTestPage : ContentPage
                 if (bitmap == null)
                     throw new Exception("无法解码图片");
 
+                _originalWidth = bitmap.Width;
+                _originalHeight = bitmap.Height;
                 Debug.WriteLine($"[ML Test] Original dimensions: {bitmap.Width}x{bitmap.Height}");
 
                 // 强制缩放到 512x512（拉伸，不保持宽高比）
@@ -211,8 +219,54 @@ public partial class MLTestPage : ContentPage
             // 记录开始时间
             var stopwatch = Stopwatch.StartNew();
 
-            // 运行 ML 推理
-            var result = await _mlService.DetectCornersAsync(_currentImageBytes);
+#if ANDROID
+            // Android 平台：使用原生 API 提取 RGB 数据
+            float[]? rgbData = await Task.Run(() =>
+            {
+                using var bitmap = Android.Graphics.BitmapFactory.DecodeByteArray(_currentImageBytes, 0, _currentImageBytes.Length!);
+                if (bitmap == null)
+                    return null;
+
+                Debug.WriteLine($"[ML Test] Extracting RGB from {bitmap.Width}x{bitmap.Height} bitmap");
+
+                // 提取像素
+                int[] pixels = new int[bitmap.Width * bitmap.Height];
+                bitmap.GetPixels(pixels, 0, bitmap.Width, 0, 0, bitmap.Width, bitmap.Height);
+
+                // 转换为 CHW 格式的 float 数组
+                float[] rgb = new float[3 * bitmap.Width * bitmap.Height];
+                for (int y = 0; y < bitmap.Height; y++)
+                {
+                    for (int x = 0; x < bitmap.Width; x++)
+                    {
+                        int pixel = pixels[y * bitmap.Width + x];
+                        int r = (pixel >> 16) & 0xFF;
+                        int g = (pixel >> 8) & 0xFF;
+                        int b = pixel & 0xFF;
+
+                        int idx = y * bitmap.Width + x;
+                        rgb[idx] = r / 255f;                                      // R 通道
+                        rgb[bitmap.Width * bitmap.Height + idx] = g / 255f;      // G 通道
+                        rgb[2 * bitmap.Width * bitmap.Height + idx] = b / 255f;  // B 通道
+                    }
+                }
+
+                Debug.WriteLine($"[ML Test] RGB data extracted: {rgb.Length} floats");
+                return rgb;
+            });
+
+            if (rgbData == null)
+            {
+                await DisplayAlert("错误", "无法提取图片数据", "确定");
+                return;
+            }
+
+            // 运行 ML 推理（使用 RGB 数据）
+            var result = await _mlService.DetectCornersFromRgbAsync(rgbData, _originalWidth, _originalHeight);
+#else
+            // 其他平台：使用 ImageSharp（慢）
+            var result = await _mlService.DetectCornersAsync(_currentImageBytes, _originalWidth, _originalHeight);
+#endif
 
             stopwatch.Stop();
 
@@ -300,7 +354,7 @@ public partial class MLTestPage : ContentPage
 
     private async Task PerformPerspectiveTransformAsync(QuadrilateralPoints corners)
     {
-        if (_currentImageBytes == null)
+        if (_originalImageBytes == null)
             return;
 
         try
@@ -310,8 +364,8 @@ public partial class MLTestPage : ContentPage
             var transformedBytes = await Task.Run(() =>
             {
 #if ANDROID
-                // 加载 512x512 的图片
-                using var bitmap = Android.Graphics.BitmapFactory.DecodeByteArray(_currentImageBytes, 0, _currentImageBytes.Length);
+                // 加载原始图片
+                using var bitmap = Android.Graphics.BitmapFactory.DecodeByteArray(_originalImageBytes, 0, _originalImageBytes.Length);
                 if (bitmap == null)
                     return null;
 

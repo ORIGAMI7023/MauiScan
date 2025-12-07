@@ -4,6 +4,7 @@ using MauiScan.ML.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+using OpenCvSharp;
 
 namespace MauiScan.ML.Services;
 
@@ -25,7 +26,151 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
     }
 
     /// <summary>
-    /// 检测图片中的四个角点
+    /// 检测图片中的四个角点（使用预处理的 RGB 数据）
+    /// </summary>
+    public async Task<MLDetectionResult> DetectCornersFromRgbAsync(float[] rgbData, int originalWidth, int originalHeight)
+    {
+        System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersFromRgbAsync started, original: {originalWidth}x{originalHeight}");
+
+        await EnsureInitializedAsync();
+        System.Diagnostics.Debug.WriteLine($"[ML] Model initialized");
+
+        if (_session == null)
+            throw new InvalidOperationException("模型未成功加载");
+
+        return await Task.Run(() =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[ML] Background task started");
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            // 直接从 float[] 构建 Tensor（CHW 格式）
+            var inputTensor = new DenseTensor<float>(new[] { 1, 3, _config.InputHeight, _config.InputWidth });
+            Buffer.BlockCopy(rgbData, 0, inputTensor.Buffer.ToArray(), 0, rgbData.Length * sizeof(float));
+            System.Diagnostics.Debug.WriteLine($"[ML] Tensor created from RGB data, took {sw.ElapsedMilliseconds}ms");
+
+            // 运行推理
+            sw.Restart();
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input", inputTensor)
+            };
+
+            using var results = _session.Run(inputs);
+            System.Diagnostics.Debug.WriteLine($"[ML] Inference completed, took {sw.ElapsedMilliseconds}ms");
+
+            // 解析输出
+            var coordinates = results.First(r => r.Name == "coordinates").AsEnumerable<float>().ToArray();
+            System.Diagnostics.Debug.WriteLine($"[ML] Coordinates: [{string.Join(", ", coordinates.Select(c => c.ToString("F3")))}]");
+
+            // 反归一化坐标到原始图片尺寸
+            var corners = new QuadrilateralPoints
+            {
+                TopLeftX = coordinates[0] * originalWidth,
+                TopLeftY = coordinates[1] * originalHeight,
+                TopRightX = coordinates[2] * originalWidth,
+                TopRightY = coordinates[3] * originalHeight,
+                BottomRightX = coordinates[4] * originalWidth,
+                BottomRightY = coordinates[5] * originalHeight,
+                BottomLeftX = coordinates[6] * originalWidth,
+                BottomLeftY = coordinates[7] * originalHeight
+            };
+
+            // 基于坐标合理性计算置信度
+            float confidence = CalculateConfidenceFromCoordinates(coordinates);
+            System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
+
+            var cornerConfidences = new float[4];
+            for (int i = 0; i < 4; i++)
+            {
+                cornerConfidences[i] = confidence;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersFromRgbAsync completed successfully");
+
+            return new MLDetectionResult
+            {
+                Corners = corners,
+                Confidence = confidence,
+                CornerConfidences = cornerConfidences
+            };
+        });
+    }
+
+    /// <summary>
+    /// 检测图片中的四个角点（带原始尺寸信息）
+    /// </summary>
+    public async Task<MLDetectionResult> DetectCornersAsync(byte[] imageBytes, int originalWidth, int originalHeight)
+    {
+        // 使用 ImageSharp 加载图片（兼容性方案）
+        System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersAsync started, image size: {imageBytes.Length} bytes, original: {originalWidth}x{originalHeight}");
+
+        await EnsureInitializedAsync();
+
+        if (_session == null)
+            throw new InvalidOperationException("模型未成功加载");
+
+        return await Task.Run(() =>
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            using var image = Image.Load<Rgb24>(imageBytes);
+            System.Diagnostics.Debug.WriteLine($"[ML] Image loaded: {image.Width}x{image.Height}, took {sw.ElapsedMilliseconds}ms");
+
+            if (image.Width != _config.InputWidth || image.Height != _config.InputHeight)
+            {
+                sw.Restart();
+                image.Mutate(x => x.Resize(_config.InputWidth, _config.InputHeight));
+                System.Diagnostics.Debug.WriteLine($"[ML] Image resized, took {sw.ElapsedMilliseconds}ms");
+            }
+
+            sw.Restart();
+            var inputTensor = ImageToTensor(image);
+            System.Diagnostics.Debug.WriteLine($"[ML] Tensor created, took {sw.ElapsedMilliseconds}ms");
+
+            sw.Restart();
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input", inputTensor)
+            };
+
+            using var results = _session.Run(inputs);
+            System.Diagnostics.Debug.WriteLine($"[ML] Inference completed, took {sw.ElapsedMilliseconds}ms");
+
+            var coordinates = results.First(r => r.Name == "coordinates").AsEnumerable<float>().ToArray();
+            System.Diagnostics.Debug.WriteLine($"[ML] Coordinates: [{string.Join(", ", coordinates.Select(c => c.ToString("F3")))}]");
+
+            var corners = new QuadrilateralPoints
+            {
+                TopLeftX = coordinates[0] * originalWidth,
+                TopLeftY = coordinates[1] * originalHeight,
+                TopRightX = coordinates[2] * originalWidth,
+                TopRightY = coordinates[3] * originalHeight,
+                BottomRightX = coordinates[4] * originalWidth,
+                BottomRightY = coordinates[5] * originalHeight,
+                BottomLeftX = coordinates[6] * originalWidth,
+                BottomLeftY = coordinates[7] * originalHeight
+            };
+
+            float confidence = CalculateConfidenceFromCoordinates(coordinates);
+            System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
+
+            var cornerConfidences = new float[4];
+            for (int i = 0; i < 4; i++)
+            {
+                cornerConfidences[i] = confidence;
+            }
+
+            return new MLDetectionResult
+            {
+                Corners = corners,
+                Confidence = confidence,
+                CornerConfidences = cornerConfidences
+            };
+        });
+    }
+
+    /// <summary>
+    /// 检测图片中的四个角点（自动检测尺寸）
     /// </summary>
     public async Task<MLDetectionResult> DetectCornersAsync(byte[] imageBytes)
     {
@@ -97,7 +242,11 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
                 BottomLeftY = coordinates[7] * originalHeight
             };
 
-            // 7. 基于坐标合理性计算置信度（因为模型置信度头未训练）
+            // 7. ⭐ Stage 2: 传统CV精修（在原图上精修到亚像素级）
+            System.Diagnostics.Debug.WriteLine($"[ML] Starting Stage 2: Corner refinement");
+            var refinedCorners = RefineCorners(corners, imageBytes, originalWidth, originalHeight);
+
+            // 8. 基于坐标合理性计算置信度（因为模型置信度头未训练）
             // 检查：四边形是否合理（顺时针顺序、面积合理、角度合理）
             float confidence = CalculateConfidenceFromCoordinates(coordinates);
             System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
@@ -108,11 +257,11 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
                 cornerConfidences[i] = confidence;
             }
 
-            System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersAsync completed successfully");
+            System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersAsync completed successfully (with refinement)");
 
             return new MLDetectionResult
             {
-                Corners = corners,
+                Corners = refinedCorners, // ⭐ 使用精修后的坐标
                 Confidence = confidence,
                 CornerConfidences = cornerConfidences
             };
@@ -333,6 +482,274 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
 
         return tensor;
     }
+
+    #region Corner Refinement (Stage 2: Traditional CV)
+
+    /// <summary>
+    /// 精修ML预测的角点（使用传统CV方法达到亚像素精度）
+    /// </summary>
+    /// <param name="mlCorners">ML预测的粗略角点（归一化坐标）</param>
+    /// <param name="imageBytes">原始图片数据</param>
+    /// <param name="originalWidth">原图宽度</param>
+    /// <param name="originalHeight">原图高度</param>
+    /// <returns>精修后的角点</returns>
+    private QuadrilateralPoints RefineCorners(
+        QuadrilateralPoints mlCorners,
+        byte[] imageBytes,
+        int originalWidth,
+        int originalHeight)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Refinement] Starting corner refinement on {originalWidth}x{originalHeight} image");
+
+        // 加载原图为灰度图
+        using var mat = Mat.FromImageData(imageBytes, ImreadModes.Grayscale);
+
+        if (mat.Empty())
+        {
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Failed to load image, returning ML corners");
+            return mlCorners;
+        }
+
+        try
+        {
+            // 对4个角点分别精修
+            var refined = new QuadrilateralPoints
+            {
+                TopLeftX = mlCorners.TopLeftX,
+                TopLeftY = mlCorners.TopLeftY,
+                TopRightX = mlCorners.TopRightX,
+                TopRightY = mlCorners.TopRightY,
+                BottomRightX = mlCorners.BottomRightX,
+                BottomRightY = mlCorners.BottomRightY,
+                BottomLeftX = mlCorners.BottomLeftX,
+                BottomLeftY = mlCorners.BottomLeftY
+            };
+
+            // 精修左上角
+            var (tlX, tlY) = RefineSingleCorner(mat, mlCorners.TopLeftX, mlCorners.TopLeftY);
+            if (tlX >= 0)
+            {
+                refined.TopLeftX = tlX;
+                refined.TopLeftY = tlY;
+            }
+
+            // 精修右上角
+            var (trX, trY) = RefineSingleCorner(mat, mlCorners.TopRightX, mlCorners.TopRightY);
+            if (trX >= 0)
+            {
+                refined.TopRightX = trX;
+                refined.TopRightY = trY;
+            }
+
+            // 精修右下角
+            var (brX, brY) = RefineSingleCorner(mat, mlCorners.BottomRightX, mlCorners.BottomRightY);
+            if (brX >= 0)
+            {
+                refined.BottomRightX = brX;
+                refined.BottomRightY = brY;
+            }
+
+            // 精修左下角
+            var (blX, blY) = RefineSingleCorner(mat, mlCorners.BottomLeftX, mlCorners.BottomLeftY);
+            if (blX >= 0)
+            {
+                refined.BottomLeftX = blX;
+                refined.BottomLeftY = blY;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Refinement completed successfully");
+            return refined;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Error during refinement: {ex.Message}");
+            // 精修失败，返回ML原始结果
+            return mlCorners;
+        }
+    }
+
+    /// <summary>
+    /// 精修单个角点
+    /// </summary>
+    /// <param name="image">灰度图</param>
+    /// <param name="mlX">ML预测的X坐标</param>
+    /// <param name="mlY">ML预测的Y坐标</param>
+    /// <returns>精修后的坐标，失败返回(-1, -1)</returns>
+    private (float x, float y) RefineSingleCorner(Mat image, float mlX, float mlY)
+    {
+        const int patchSize = 64; // 搜索窗口大小
+
+        try
+        {
+            // 1. 裁剪patch（确保不越界）
+            int centerX = (int)mlX;
+            int centerY = (int)mlY;
+            int halfPatch = patchSize / 2;
+
+            int x1 = Math.Max(0, centerX - halfPatch);
+            int y1 = Math.Max(0, centerY - halfPatch);
+            int x2 = Math.Min(image.Width, centerX + halfPatch);
+            int y2 = Math.Min(image.Height, centerY + halfPatch);
+
+            if (x2 - x1 < 20 || y2 - y1 < 20)
+            {
+                // Patch太小，返回失败
+                return (-1, -1);
+            }
+
+            var roi = new Rect(x1, y1, x2 - x1, y2 - y1);
+            using var patch = new Mat(image, roi);
+
+            // 2. Canny边缘检测
+            using var edges = new Mat();
+            Cv2.Canny(patch, edges, 50, 150, 3);
+
+            // 3. 霍夫直线检测
+            var lines = Cv2.HoughLinesP(
+                edges,
+                rho: 1,
+                theta: Math.PI / 180,
+                threshold: 30,
+                minLineLength: 20,
+                maxLineGap: 5
+            );
+
+            if (lines == null || lines.Length < 2)
+            {
+                // 检测到的直线太少
+                return (-1, -1);
+            }
+
+            // 4. 直线聚类（水平 vs 垂直）
+            var horizontalLines = new List<LineSegmentPoint>();
+            var verticalLines = new List<LineSegmentPoint>();
+
+            foreach (var line in lines)
+            {
+                float dx = Math.Abs(line.P2.X - line.P1.X);
+                float dy = Math.Abs(line.P2.Y - line.P1.Y);
+
+                if (dx > dy) // 更水平
+                {
+                    horizontalLines.Add(line);
+                }
+                else // 更垂直
+                {
+                    verticalLines.Add(line);
+                }
+            }
+
+            if (horizontalLines.Count == 0 || verticalLines.Count == 0)
+            {
+                // 没有找到两组直线
+                return (-1, -1);
+            }
+
+            // 5. 拟合直线（简化版：使用中位数斜率和截距）
+            var hLine = FitLine(horizontalLines);
+            var vLine = FitLine(verticalLines);
+
+            if (hLine == null || vLine == null)
+            {
+                return (-1, -1);
+            }
+
+            // 6. 计算交点
+            var intersection = ComputeIntersection(hLine.Value, vLine.Value);
+            if (intersection == null)
+            {
+                return (-1, -1);
+            }
+
+            // 7. 转换回原图坐标
+            float refinedX = x1 + intersection.Value.X;
+            float refinedY = y1 + intersection.Value.Y;
+
+            // 8. 验证精修结果是否合理（距离ML预测不能太远）
+            float distance = (float)Math.Sqrt(
+                Math.Pow(refinedX - mlX, 2) + Math.Pow(refinedY - mlY, 2)
+            );
+
+            if (distance > patchSize) // 超出搜索范围
+            {
+                return (-1, -1);
+            }
+
+            return (refinedX, refinedY);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Error in RefineSingleCorner: {ex.Message}");
+            return (-1, -1);
+        }
+    }
+
+    /// <summary>
+    /// 拟合直线（返回直线方程参数）
+    /// </summary>
+    private (float k, float b)? FitLine(List<LineSegmentPoint> lines)
+    {
+        if (lines.Count == 0) return null;
+
+        // 简化版：使用所有线段端点进行最小二乘拟合
+        var points = new List<Point2f>();
+        foreach (var line in lines)
+        {
+            points.Add(new Point2f(line.P1.X, line.P1.Y));
+            points.Add(new Point2f(line.P2.X, line.P2.Y));
+        }
+
+        // 计算平均值
+        float avgX = points.Average(p => p.X);
+        float avgY = points.Average(p => p.Y);
+
+        // 最小二乘法
+        float numerator = 0;
+        float denominator = 0;
+
+        foreach (var p in points)
+        {
+            numerator += (p.X - avgX) * (p.Y - avgY);
+            denominator += (p.X - avgX) * (p.X - avgX);
+        }
+
+        if (Math.Abs(denominator) < 1e-6)
+        {
+            // 垂直线，无法用 y=kx+b 表示
+            return null;
+        }
+
+        float k = numerator / denominator;
+        float b = avgY - k * avgX;
+
+        return (k, b);
+    }
+
+    /// <summary>
+    /// 计算两条直线的交点
+    /// </summary>
+    private Point2f? ComputeIntersection((float k, float b) line1, (float k, float b) line2)
+    {
+        // line1: y = k1*x + b1
+        // line2: y = k2*x + b2
+        // 交点: k1*x + b1 = k2*x + b2
+
+        float k1 = line1.k, b1 = line1.b;
+        float k2 = line2.k, b2 = line2.b;
+
+        if (Math.Abs(k1 - k2) < 1e-6)
+        {
+            // 平行线
+            return null;
+        }
+
+        float x = (b2 - b1) / (k1 - k2);
+        float y = k1 * x + b1;
+
+        return new Point2f(x, y);
+    }
+
+    #endregion
 
     public void Dispose()
     {
