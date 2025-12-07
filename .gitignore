@@ -44,14 +44,17 @@ OpenCV-android-sdk/
 opencv2.framework/
 
 # MAUI generated files
-# 注意：Git negation 规则要求先恢复父目录
-!MauiScan/Resources/
-MauiScan/Resources/*
-!MauiScan/Resources/AppIcon/
-!MauiScan/Resources/Splash/
-!MauiScan/Resources/Fonts/
-!MauiScan/Resources/Images/
-!MauiScan/Resources/Raw/
+# 构建输出目录（需要排除）
+MauiScan/Resources/
+
+# 源代码 Resources 目录配置（位于 MauiScan/MauiScan/Resources/）
+!MauiScan/MauiScan/Resources/
+MauiScan/MauiScan/Resources/*
+!MauiScan/MauiScan/Resources/AppIcon/
+!MauiScan/MauiScan/Resources/Splash/
+!MauiScan/MauiScan/Resources/Fonts/
+!MauiScan/MauiScan/Resources/Images/
+!MauiScan/MauiScan/Resources/Raw/
 
 # Android
 *.apk
