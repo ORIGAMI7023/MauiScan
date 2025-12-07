@@ -72,6 +72,11 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
 	</ItemGroup>
 
+	<!-- ML 推理服务 -->
+	<ItemGroup>
+		<ProjectReference Include="..\MauiScan.ML\MauiScan.ML.csproj" />
+	</ItemGroup>
+
 	<!-- Android CameraX (暂时禁用，有依赖冲突) -->
 	<!--
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">

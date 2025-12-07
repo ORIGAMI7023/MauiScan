@@ -3,6 +3,8 @@ using MauiScan.Services;
 using MauiScan.Services.Sync;
 using MauiScan.Views;
 using MauiScan.Controls;
+using MauiScan.ML.Services;
+using MauiScan.ML.Models;
 
 namespace MauiScan
 {
@@ -28,6 +30,21 @@ namespace MauiScan
             // 注册服务（使用 Native C++ OpenCV 实现）
             builder.Services.AddSingleton<IImageProcessingService, NativeImageProcessingService>();
 
+            // 注册 ML 推理服务
+            builder.Services.AddSingleton<IMLInferenceService>(sp =>
+            {
+                var modelPath = Path.Combine(FileSystem.AppDataDirectory, "ppt_corner_detector.onnx");
+                var config = new ModelConfig
+                {
+                    InputWidth = 512,
+                    InputHeight = 512,
+                    HighQualityThreshold = 0.85f,
+                    MediumQualityThreshold = 0.60f,
+                    EnableGpuAcceleration = false  // 暂时禁用 GPU
+                };
+                return new OnnxInferenceService(modelPath, config);
+            });
+
             // 注册同步服务
             builder.Services.AddSingleton<ScanSyncService>(sp =>
                 new ScanSyncService("https://mauiscan.origami7023.net.cn"));
@@ -38,17 +55,13 @@ namespace MauiScan
             builder.Services.AddSingleton<IClipboardService, Platforms.Android.Services.ClipboardService>();
             builder.Services.AddSingleton<IDragDropService, Platforms.Android.Services.DragDropService>();
             builder.Services.AddSingleton<IManualAnnotationService, Platforms.Android.Services.ManualAnnotationService>();
-#elif __IOS__
-            builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
-            builder.Services.AddSingleton<IClipboardService, Platforms.iOS.Services.ClipboardService>();
-#else
-            // 其他平台暂不实现
 #endif
 
             // 注册页面
             builder.Services.AddTransient<ScanPage>();
             builder.Services.AddTransient<CameraPage>();
             builder.Services.AddTransient<HistoryPage>();
+            builder.Services.AddTransient<MLTestPage>();  // ML 测试页面
 
 #if DEBUG
     		builder.Logging.AddDebug();

@@ -1,10 +1,15 @@
 using Android.App;
+using Android.Content;
 using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using Android.Widget;
 using MauiScan.Services;
 using AndroidView = Android.Views.View;
+using Paint = Android.Graphics.Paint;
+using Color = Android.Graphics.Color;
+using Path = Android.Graphics.Path;
+using Button = Android.Widget.Button;
 
 namespace MauiScan.Platforms.Android;
 
@@ -38,12 +43,15 @@ public class ManualAnnotationActivity : Activity
         // 创建布局
         var layout = new RelativeLayout(this);
 
+        // 按钮容器（需要先创建以获取 ID）
+        var buttonContainerId = AndroidView.GenerateViewId();
+
         // 图片容器（包含图片和覆盖层）
         var imageContainer = new FrameLayout(this);
         var containerParams = new RelativeLayout.LayoutParams(
             ViewGroup.LayoutParams.MatchParent,
             ViewGroup.LayoutParams.MatchParent);
-        containerParams.AddRule(LayoutRules.Above, Resource.Id.button_container);
+        containerParams.AddRule(LayoutRules.Above, buttonContainerId);
         imageContainer.LayoutParameters = containerParams;
 
         // 图片视图
@@ -71,7 +79,7 @@ public class ManualAnnotationActivity : Activity
         // 按钮容器
         var buttonContainer = new LinearLayout(this)
         {
-            Id = Resource.Id.button_container,
+            Id = buttonContainerId,
             Orientation = Orientation.Horizontal
         };
         var buttonContainerParams = new RelativeLayout.LayoutParams(
@@ -352,15 +360,4 @@ public class AnnotationViewOverlay : AndroidView
     }
 
     public float[] GetCorners() => _corners;
-}
-
-namespace MauiScan.Platforms.Android
-{
-    public static class Resource
-    {
-        public static class Id
-        {
-            public const int button_container = 0x7f0a0001;
-        }
-    }
 }

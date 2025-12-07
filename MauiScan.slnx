@@ -1,4 +1,7 @@
 <Solution>
+  <Project Path="AnnotationTool/AnnotationTool.csproj" />
+  <Project Path="HeicConverter/HeicConverter.csproj" />
+  <Project Path="MauiScan.ML/MauiScan.ML.csproj" />
   <Project Path="MauiScan.Server/MauiScan.Server.csproj" />
   <Project Path="MauiScan/MauiScan.csproj">
     <Deploy />

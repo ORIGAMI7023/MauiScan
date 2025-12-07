@@ -19,6 +19,12 @@
             Icon="history.png"
             ContentTemplate="{DataTemplate views:HistoryPage}"
             Route="HistoryPage" />
+
+        <ShellContent
+            Title="ML 测试"
+            Icon="settings.png"
+            ContentTemplate="{DataTemplate views:MLTestPage}"
+            Route="MLTestPage" />
     </TabBar>
 
 </Shell>

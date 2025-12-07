@@ -11,6 +11,8 @@ public partial class Form1 : Form
     private int? draggedPointIndex = null;
     private float zoomFactor = 1.0f;
     private Point zoomOffset = Point.Empty;
+    private bool isMiddleButtonDragging = false;
+    private Point lastMiddleButtonPosition = Point.Empty;
 
     private PictureBox pictureBox = new();
     private Label statusLabel = new();
@@ -75,20 +77,22 @@ public partial class Form1 : Form
 
         // 说明文字
         instructionLabel.Location = new Point(rightPanelX, 100);
-        instructionLabel.Size = new Size(250, 180);
+        instructionLabel.Size = new Size(250, 250);
         instructionLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         instructionLabel.Text = "操作说明：\n\n" +
                                "1. 点击选择四个角点\n" +
                                "   (左上→右上→右下→左下)\n\n" +
                                "2. 拖拽调整角点位置\n\n" +
-                               "3. 滚轮 - 缩放 / R - 重置\n\n" +
-                               "4. Enter - 保存并下一张\n" +
-                               "5. Space - 跳过当前\n" +
-                               "6. Esc - 清除角点";
+                               "3. 滚轮 - 缩放\n" +
+                               "4. 中键 - 拖动图片\n" +
+                               "5. R - 重置视图\n\n" +
+                               "6. Enter - 保存并下一张\n" +
+                               "7. Space - 撤销上一个点\n" +
+                               "8. Esc - 清除所有角点";
         this.Controls.Add(instructionLabel);
 
         // 上一张按钮
-        prevButton.Location = new Point(rightPanelX, 290);
+        prevButton.Location = new Point(rightPanelX, 360);
         prevButton.Size = new Size(120, 40);
         prevButton.Text = "上一张 (←)";
         prevButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -97,7 +101,7 @@ public partial class Form1 : Form
         this.Controls.Add(prevButton);
 
         // 下一张按钮
-        nextButton.Location = new Point(rightPanelX + 130, 290);
+        nextButton.Location = new Point(rightPanelX + 130, 360);
         nextButton.Size = new Size(120, 40);
         nextButton.Text = "下一张 (→)";
         nextButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -106,7 +110,7 @@ public partial class Form1 : Form
         this.Controls.Add(nextButton);
 
         // 保存按钮
-        saveButton.Location = new Point(rightPanelX, 340);
+        saveButton.Location = new Point(rightPanelX, 410);
         saveButton.Size = new Size(250, 50);
         saveButton.Text = "保存标注 (Enter)";
         saveButton.Enabled = false;
@@ -141,16 +145,21 @@ public partial class Form1 : Form
     private void LoadImagesFromFolder(string folderPath)
     {
         var extensions = new[] { ".jpg", ".jpeg", ".png", ".bmp" };
-        imageFiles = Directory.GetFiles(folderPath)
+        var allImages = Directory.GetFiles(folderPath)
             .Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
             .OrderBy(f => f)
             .ToList();
 
-        if (imageFiles.Count == 0)
+        if (allImages.Count == 0)
         {
             MessageBox.Show("文件夹中没有找到图片文件！", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
+
+        // 将已标注的图片放在最后
+        var unannotated = allImages.Where(f => !File.Exists(Path.ChangeExtension(f, ".json"))).ToList();
+        var annotated = allImages.Where(f => File.Exists(Path.ChangeExtension(f, ".json"))).ToList();
+        imageFiles = unannotated.Concat(annotated).ToList();
 
         currentIndex = 0;
         LoadCurrentImage();
@@ -313,7 +322,19 @@ public partial class Form1 : Form
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
     {
-        if (currentImage == null || e.Button != MouseButtons.Left)
+        if (currentImage == null)
+            return;
+
+        // 中键拖动图片
+        if (e.Button == MouseButtons.Middle)
+        {
+            isMiddleButtonDragging = true;
+            lastMiddleButtonPosition = e.Location;
+            pictureBox.Cursor = Cursors.SizeAll;
+            return;
+        }
+
+        if (e.Button != MouseButtons.Left)
             return;
 
         // 如果已经有4个点，检查是否点击了某个角点
@@ -356,7 +377,25 @@ public partial class Form1 : Form
 
     private void PictureBox_MouseMove(object? sender, MouseEventArgs e)
     {
-        if (draggedPointIndex.HasValue && currentImage != null)
+        if (currentImage == null)
+            return;
+
+        // 中键拖动图片
+        if (isMiddleButtonDragging)
+        {
+            int deltaX = e.Location.X - lastMiddleButtonPosition.X;
+            int deltaY = e.Location.Y - lastMiddleButtonPosition.Y;
+
+            zoomOffset.X += deltaX;
+            zoomOffset.Y += deltaY;
+
+            lastMiddleButtonPosition = e.Location;
+            pictureBox.Invalidate();
+            return;
+        }
+
+        // 拖动角点
+        if (draggedPointIndex.HasValue)
         {
             var imagePoint = GetImageCoordinates(e.Location);
             if (imagePoint.HasValue)
@@ -369,6 +408,14 @@ public partial class Form1 : Form
 
     private void PictureBox_MouseUp(object? sender, MouseEventArgs e)
     {
+        // 释放中键拖动
+        if (e.Button == MouseButtons.Middle && isMiddleButtonDragging)
+        {
+            isMiddleButtonDragging = false;
+            pictureBox.Cursor = Cursors.Default;
+        }
+
+        // 释放角点拖动
         if (draggedPointIndex.HasValue)
         {
             draggedPointIndex = null;
@@ -385,21 +432,50 @@ public partial class Form1 : Form
 
         // 滚轮向上放大，向下缩小
         if (e.Delta > 0)
-            zoomFactor = Math.Min(zoomFactor * 1.2f, 10.0f);
+            zoomFactor = Math.Min(zoomFactor * 1.4f, 10.0f);
         else
-            zoomFactor = Math.Max(zoomFactor / 1.2f, 0.1f);
+            zoomFactor = Math.Max(zoomFactor / 1.4f, 0.1f);
 
-        // 计算以鼠标位置为中心的缩放偏移
+        // 计算基础缩放比例
+        var imgWidth = currentImage.Width;
+        var imgHeight = currentImage.Height;
+        var boxWidth = pictureBox.Width;
+        var boxHeight = pictureBox.Height;
+        float baseScale = Math.Min((float)boxWidth / imgWidth, (float)boxHeight / imgHeight);
+
+        // 计算缩放前后的实际缩放比例
+        float oldScale = baseScale * oldZoom;
+        float newScale = baseScale * zoomFactor;
+
+        // 计算缩放前图片的居中偏移
+        int oldDisplayWidth = (int)(imgWidth * oldScale);
+        int oldDisplayHeight = (int)(imgHeight * oldScale);
+        int oldCenterOffsetX = (boxWidth - oldDisplayWidth) / 2;
+        int oldCenterOffsetY = (boxHeight - oldDisplayHeight) / 2;
+
+        // 计算缩放后图片的居中偏移
+        int newDisplayWidth = (int)(imgWidth * newScale);
+        int newDisplayHeight = (int)(imgHeight * newScale);
+        int newCenterOffsetX = (boxWidth - newDisplayWidth) / 2;
+        int newCenterOffsetY = (boxHeight - newDisplayHeight) / 2;
+
         // 鼠标在 PictureBox 中的位置
         var mousePos = e.Location;
 
-        // 鼠标在图片坐标系中的位置（缩放前）
-        float imageX = (mousePos.X - zoomOffset.X) / oldZoom;
-        float imageY = (mousePos.Y - zoomOffset.Y) / oldZoom;
+        // 鼠标相对于图片左上角的位置（缩放前）
+        float relX = mousePos.X - oldCenterOffsetX - zoomOffset.X;
+        float relY = mousePos.Y - oldCenterOffsetY - zoomOffset.Y;
 
-        // 缩放后，保持鼠标指向的图片位置不变
-        zoomOffset.X = (int)(mousePos.X - imageX * zoomFactor);
-        zoomOffset.Y = (int)(mousePos.Y - imageY * zoomFactor);
+        // 鼠标在原始图片上的位置
+        float imgX = relX / oldScale;
+        float imgY = relY / oldScale;
+
+        // 缩放后，计算新的偏移以保持鼠标指向位置不变
+        float newRelX = imgX * newScale;
+        float newRelY = imgY * newScale;
+
+        zoomOffset.X = (int)(mousePos.X - newCenterOffsetX - newRelX);
+        zoomOffset.Y = (int)(mousePos.Y - newCenterOffsetY - newRelY);
 
         UpdateStatus();
         pictureBox.Invalidate();
@@ -588,7 +664,13 @@ public partial class Form1 : Form
                 break;
 
             case Keys.Space:
-                NavigateImage(1);
+                // 撤销上一个点
+                if (corners.Count > 0)
+                {
+                    corners.RemoveAt(corners.Count - 1);
+                    UpdateStatus();
+                    pictureBox.Invalidate();
+                }
                 e.Handled = true;
                 break;
 
