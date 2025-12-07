@@ -4,7 +4,10 @@ using MauiScan.ML.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
+
+#if WINDOWS
 using OpenCvSharp;
+#endif
 
 namespace MauiScan.ML.Services;
 
@@ -485,6 +488,7 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
 
     #region Corner Refinement (Stage 2: Traditional CV)
 
+#if WINDOWS
     /// <summary>
     /// 精修ML预测的角点（使用传统CV方法达到亚像素精度）
     /// </summary>
@@ -748,6 +752,21 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
 
         return new Point2f(x, y);
     }
+
+#else
+    /// <summary>
+    /// 精修ML预测的角点（非 Windows 平台降级实现）
+    /// </summary>
+    private QuadrilateralPoints RefineCorners(
+        QuadrilateralPoints mlCorners,
+        byte[] imageBytes,
+        int originalWidth,
+        int originalHeight)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Refinement] Corner refinement not available on this platform, returning ML corners");
+        return mlCorners;
+    }
+#endif
 
     #endregion
 

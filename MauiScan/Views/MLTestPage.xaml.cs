@@ -361,7 +361,7 @@ public partial class MLTestPage : ContentPage
         {
             Debug.WriteLine($"[ML Test] Starting perspective transform...");
 
-            var transformedBytes = await Task.Run(() =>
+            Func<byte[]?> transformFunc = () =>
             {
 #if ANDROID
                 // 加载原始图片
@@ -423,7 +423,9 @@ public partial class MLTestPage : ContentPage
 #else
                 return null;
 #endif
-            });
+            };
+
+            byte[]? transformedBytes = await Task.Run(transformFunc);
 
             if (transformedBytes != null)
             {
