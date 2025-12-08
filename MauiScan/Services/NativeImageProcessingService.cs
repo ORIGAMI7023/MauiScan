@@ -81,6 +81,15 @@ public class NativeImageProcessingService : IImageProcessingService
     private static extern void scanner_free_result(ref NativeScanResult result);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int scanner_detect_bounds_by_brightness(
+        byte[] inputData,
+        int inputSize,
+        int brightnessThreshold,
+        double minAreaRatio,
+        ref NativeQuadPoints quad
+    );
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int scanner_apply_transform(
         byte[] inputData,
         int inputSize,
@@ -222,13 +231,19 @@ public class NativeImageProcessingService : IImageProcessingService
         });
     }
 
-    public async Task<QuadrilateralPoints?> DetectDocumentBoundsAsync(byte[] imageBytes)
+    public async Task<QuadrilateralPoints?> DetectDocumentBoundsAsync(byte[] imageBytes, double minAreaRatio = 0.05)
     {
         return await Task.Run(() =>
         {
             try
             {
                 var parameters = scanner_get_default_params();
+
+                // 设置自定义的最小面积阈值
+                parameters.MinContourAreaRatio = minAreaRatio;
+
+                System.Diagnostics.Debug.WriteLine($"[Native] DetectBounds with MinAreaRatio={minAreaRatio:P0}");
+
                 var nativeQuad = new NativeQuadPoints();
 
                 int detected = scanner_detect_bounds(
@@ -240,6 +255,7 @@ public class NativeImageProcessingService : IImageProcessingService
 
                 if (detected == 0)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[Native] No document detected with MinAreaRatio={minAreaRatio:P0}");
                     return null;
                 }
 
@@ -248,6 +264,40 @@ public class NativeImageProcessingService : IImageProcessingService
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"边界检测失败: {ex.Message}");
+                return null;
+            }
+        });
+    }
+
+    public async Task<QuadrilateralPoints?> DetectDocumentBoundsByBrightnessAsync(byte[] imageBytes, int brightnessThreshold = 20, double minAreaRatio = 0.5)
+    {
+        return await Task.Run(() =>
+        {
+            try
+            {
+                System.Diagnostics.Debug.WriteLine($"[Native] DetectBoundsByBrightness with threshold={brightnessThreshold}, minArea={minAreaRatio:P0}");
+
+                var nativeQuad = new NativeQuadPoints();
+
+                int detected = scanner_detect_bounds_by_brightness(
+                    imageBytes,
+                    imageBytes.Length,
+                    brightnessThreshold,
+                    minAreaRatio,
+                    ref nativeQuad
+                );
+
+                if (detected == 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Native] No document detected by brightness method");
+                    return null;
+                }
+
+                return ConvertToManagedQuad(nativeQuad);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"亮度检测失败: {ex.Message}");
                 return null;
             }
         });

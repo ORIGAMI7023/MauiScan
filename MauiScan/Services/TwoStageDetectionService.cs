@@ -87,25 +87,32 @@ public class TwoStageDetectionService
 
         Debug.WriteLine($"[TwoStageDetection] Cropped size: {cropResult.Value.Region.CroppedSize.Width}x{cropResult.Value.Region.CroppedSize.Height}");
 
-        // 在裁剪后的区域中检测PPT
-        Debug.WriteLine("[TwoStageDetection] Stage 2: Detecting PPT in cropped region...");
+        // 在裁剪后的区域中检测PPT（使用亮度阈值方法）
+        Debug.WriteLine("[TwoStageDetection] Stage 2: Detecting PPT by brightness in cropped region...");
 
-        var pptQuadRelative = await _nativeService.DetectDocumentBoundsAsync(cropResult.Value.CroppedBytes);
+        const int BRIGHTNESS_THRESHOLD = 20;  // 亮度阈值：比平均亮度高20
+        const double PPT_MIN_AREA_RATIO = 0.5; // PPT必须占幕布的50%以上
+
+        var pptQuadRelative = await _nativeService.DetectDocumentBoundsByBrightnessAsync(
+            cropResult.Value.CroppedBytes,
+            BRIGHTNESS_THRESHOLD,
+            PPT_MIN_AREA_RATIO
+        );
 
         if (pptQuadRelative == null)
         {
-            Debug.WriteLine("[TwoStageDetection] Stage 2 failed: No PPT detected in cropped region");
+            Debug.WriteLine($"[TwoStageDetection] Stage 2 failed: No PPT detected by brightness method");
 
             result.PptStage = new StageResult
             {
                 IsSuccess = false,
-                ErrorMessage = "PPT检测失败 - 在幕布内未检测到PPT边界"
+                ErrorMessage = $"PPT检测失败 - 在幕布内未检测到亮度区域（阈值={BRIGHTNESS_THRESHOLD}，最小面积={PPT_MIN_AREA_RATIO:P0}）"
             };
 
             return result;
         }
 
-        Debug.WriteLine($"[TwoStageDetection] PPT detected (relative): TL({pptQuadRelative.TopLeft.X},{pptQuadRelative.TopLeft.Y})");
+        Debug.WriteLine($"[TwoStageDetection] PPT detected by brightness (relative): TL({pptQuadRelative.TopLeft.X},{pptQuadRelative.TopLeft.Y})");
 
         // 转换相对坐标为绝对坐标
         var pptQuadAbsolute = _cropService.TransformToAbsolute(pptQuadRelative, cropResult.Value.Region);
@@ -125,6 +132,19 @@ public class TwoStageDetectionService
     }
 
     /// <summary>
+    /// 计算四边形面积（使用 Shoelace 公式）
+    /// </summary>
+    private double CalculateQuadArea(QuadrilateralPoints quad)
+    {
+        return Math.Abs(
+            (quad.TopLeft.X * quad.TopRight.Y - quad.TopRight.X * quad.TopLeft.Y) +
+            (quad.TopRight.X * quad.BottomRight.Y - quad.BottomRight.X * quad.TopRight.Y) +
+            (quad.BottomRight.X * quad.BottomLeft.Y - quad.BottomLeft.X * quad.BottomRight.Y) +
+            (quad.BottomLeft.X * quad.TopLeft.Y - quad.TopLeft.X * quad.BottomLeft.Y)
+        ) / 2.0;
+    }
+
+    /// <summary>
     /// 计算置信度评分（基于面积比例和形状规则性）
     /// 参考 Native.OpenCV 中的 calculate_contour_score 逻辑
     /// </summary>
@@ -133,12 +153,7 @@ public class TwoStageDetectionService
         try
         {
             // 计算四边形面积（使用 Shoelace 公式）
-            double area = Math.Abs(
-                (quad.TopLeft.X * quad.TopRight.Y - quad.TopRight.X * quad.TopLeft.Y) +
-                (quad.TopRight.X * quad.BottomRight.Y - quad.BottomRight.X * quad.TopRight.Y) +
-                (quad.BottomRight.X * quad.BottomLeft.Y - quad.BottomLeft.X * quad.BottomRight.Y) +
-                (quad.BottomLeft.X * quad.TopLeft.Y - quad.TopLeft.X * quad.BottomLeft.Y)
-            ) / 2.0;
+            double area = CalculateQuadArea(quad);
 
             // 图像总面积
             double imageArea = imageSize.Width * imageSize.Height;

@@ -178,9 +178,9 @@ static bool detect_document_bounds_internal(
             return false;
         }
 
-        // 6. 使用低阈值筛选候选轮廓（3%，避免遗漏）
+        // 6. 使用参数配置的最小面积阈值筛选候选轮廓
         double image_area = image.cols * image.rows;
-        double min_area = image_area * 0.03; // 降低到 3%
+        double min_area = image_area * params->min_contour_area_ratio;
 
         std::vector<ContourCandidate> candidates;
 
@@ -670,6 +670,144 @@ int32_t scanner_refine_corner(
     }
     catch (const std::exception& e) {
         LOGE("[RefineCorner] Exception: %s", e.what());
+        return 0;
+    }
+}
+
+// 基于亮度阈值检测PPT边界（用于第二阶段检测）
+int32_t scanner_detect_bounds_by_brightness(
+    const uint8_t* input_data,
+    int32_t input_size,
+    int32_t brightness_threshold,
+    double min_area_ratio,
+    QuadPoints* quad
+) {
+    LOGD("[BrightnessDetect] Starting detection with threshold=%d, minArea=%.2f", brightness_threshold, min_area_ratio);
+
+    if (!input_data || input_size <= 0 || !quad) {
+        LOGE("[BrightnessDetect] Invalid parameters");
+        return 0;
+    }
+
+    try {
+        // 1. 解码图像
+        std::vector<uint8_t> buffer(input_data, input_data + input_size);
+        Mat image = imdecode(buffer, IMREAD_COLOR);
+
+        if (image.empty()) {
+            LOGE("[BrightnessDetect] Failed to decode image");
+            return 0;
+        }
+
+        LOGD("[BrightnessDetect] Image decoded: %dx%d", image.cols, image.rows);
+
+        // 2. 转换为灰度图
+        Mat gray;
+        cvtColor(image, gray, COLOR_BGR2GRAY);
+
+        // 3. 计算平均亮度
+        Scalar meanBrightness = mean(gray);
+        double avgBrightness = meanBrightness[0];
+        LOGD("[BrightnessDetect] Average brightness: %.1f", avgBrightness);
+
+        // 4. 二值化：亮度 > (平均 + 阈值) 的区域为白色（PPT区域）
+        Mat binary;
+        double thresholdValue = avgBrightness + brightness_threshold;
+        threshold(gray, binary, thresholdValue, 255, THRESH_BINARY);
+
+        LOGD("[BrightnessDetect] Binary threshold: %.1f", thresholdValue);
+
+        // 5. 形态学处理：闭运算（填充孔洞）+ 开运算（去噪）
+        int morphSize = std::max(3, std::min(image.cols, image.rows) / 100);  // 根据图像大小动态调整
+        Mat kernel = getStructuringElement(MORPH_RECT, Size(morphSize, morphSize));
+
+        Mat closed, opened;
+        morphologyEx(binary, closed, MORPH_CLOSE, kernel);  // 闭运算：填充内部孔洞
+        morphologyEx(closed, opened, MORPH_OPEN, kernel);   // 开运算：去除小噪声
+
+        LOGD("[BrightnessDetect] Morphology kernel size: %d", morphSize);
+
+        // 6. 查找轮廓
+        std::vector<std::vector<Point>> contours;
+        findContours(opened, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+        LOGD("[BrightnessDetect] Found %zu contours", contours.size());
+
+        if (contours.empty()) {
+            LOGE("[BrightnessDetect] No contours found");
+            return 0;
+        }
+
+        // 7. 找到最大面积的轮廓
+        double maxArea = 0;
+        int maxIdx = -1;
+        double imageArea = image.cols * image.rows;
+
+        for (size_t i = 0; i < contours.size(); i++) {
+            double area = contourArea(contours[i]);
+            if (area > maxArea) {
+                maxArea = area;
+                maxIdx = i;
+            }
+        }
+
+        LOGD("[BrightnessDetect] Max contour area: %.0f (%.1f%% of image)", maxArea, (maxArea / imageArea) * 100);
+
+        // 8. 验证面积占比
+        double areaRatio = maxArea / imageArea;
+        if (areaRatio < min_area_ratio) {
+            LOGE("[BrightnessDetect] Area ratio %.1f%% < min %.1f%%", areaRatio * 100, min_area_ratio * 100);
+            return 0;
+        }
+
+        // 9. 拟合四边形
+        const auto& bestContour = contours[maxIdx];
+        double peri = arcLength(bestContour, true);
+        std::vector<Point> approx;
+
+        // 尝试不同的epsilon值来拟合四边形
+        for (double epsilon = 0.01; epsilon <= 0.10; epsilon += 0.01) {
+            approxPolyDP(bestContour, approx, epsilon * peri, true);
+
+            if (approx.size() == 4) {
+                LOGD("[BrightnessDetect] Quad approximated with epsilon=%.2f", epsilon);
+                break;
+            }
+        }
+
+        // 10. 如果无法拟合为四边形，使用最小外接旋转矩形
+        if (approx.size() != 4) {
+            LOGD("[BrightnessDetect] Cannot approximate to quad, using minAreaRect");
+
+            RotatedRect rotatedRect = minAreaRect(bestContour);
+            Point2f vertices[4];
+            rotatedRect.points(vertices);
+
+            // 转换为整数点
+            approx.clear();
+            for (int i = 0; i < 4; i++) {
+                approx.push_back(Point(static_cast<int>(vertices[i].x), static_cast<int>(vertices[i].y)));
+            }
+        }
+
+        if (approx.size() != 4) {
+            LOGE("[BrightnessDetect] Failed to get 4 corners (got %zu)", approx.size());
+            return 0;
+        }
+
+        // 11. 排序角点并填充结果
+        sort_quad_points(approx, quad);
+
+        LOGD("[BrightnessDetect] Success! Quad: TL(%d,%d) TR(%d,%d) BR(%d,%d) BL(%d,%d)",
+            quad->top_left_x, quad->top_left_y,
+            quad->top_right_x, quad->top_right_y,
+            quad->bottom_right_x, quad->bottom_right_y,
+            quad->bottom_left_x, quad->bottom_left_y);
+
+        return 1;
+    }
+    catch (const std::exception& e) {
+        LOGE("[BrightnessDetect] Exception: %s", e.what());
         return 0;
     }
 }

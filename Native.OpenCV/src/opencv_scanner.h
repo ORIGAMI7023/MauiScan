@@ -147,6 +147,25 @@ SCANNER_API int32_t scanner_refine_corner(
     float* refined_y
 );
 
+/**
+ * 基于亮度阈值检测PPT边界（用于第二阶段检测）
+ * 适用于PPT投影区域比幕布更亮的场景
+ *
+ * @param input_data    输入图像数据（裁剪后的幕布区域，JPEG/PNG 编码）
+ * @param input_size    输入数据大小
+ * @param brightness_threshold  亮度阈值增量（默认20，相对于平均亮度）
+ * @param min_area_ratio  最小面积占比（默认0.5，即50%）
+ * @param quad          输出四边形顶点
+ * @return              1=检测到, 0=未检测到
+ */
+SCANNER_API int32_t scanner_detect_bounds_by_brightness(
+    const uint8_t* input_data,
+    int32_t input_size,
+    int32_t brightness_threshold,
+    double min_area_ratio,
+    QuadPoints* quad
+);
+
 #ifdef __cplusplus
 }
 #endif
