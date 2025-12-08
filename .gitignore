@@ -125,3 +125,4 @@ MauiScan.ML.Training/*.jpeg
 # ML Test project
 MauiScan.ML.Test/
 /cv_debug_output
+/preprocessing_results
