@@ -133,7 +133,10 @@ SCANNER_API const char* scanner_get_version(void);
  * @param ml_y          ML 预测的 Y 坐标
  * @param refined_x     输出精修后的 X 坐标
  * @param refined_y     输出精修后的 Y 坐标
- * @return              1=成功, 0=失败
+ * @return              置信度级别：
+ *                      0 = 失败（证据不足或异常）
+ *                      1 = 低置信度（各1条直线，证据勉强）
+ *                      2 = 高置信度（各2+条直线，证据充分）
  */
 SCANNER_API int32_t scanner_refine_corner(
     const uint8_t* input_data,

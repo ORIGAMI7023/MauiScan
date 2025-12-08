@@ -46,7 +46,7 @@
             <Button x:Name="DetectButton"
                     Text="🔍 开始检测"
                     Clicked="OnDetectClicked"
-                    BackgroundColor="{StaticResource Success}"
+                    BackgroundColor="{StaticResource Primary}"
                     TextColor="White"
                     IsEnabled="{Binding HasImage}"/>
 
@@ -119,7 +119,7 @@
                     <Button x:Name="CopyErrorButton"
                             Text="📋 复制错误消息"
                             Clicked="OnCopyErrorClicked"
-                            BackgroundColor="{StaticResource Danger}"
+                            BackgroundColor="{StaticResource Gray600}"
                             TextColor="White"
                             FontSize="12"
                             Margin="0,5,0,0"

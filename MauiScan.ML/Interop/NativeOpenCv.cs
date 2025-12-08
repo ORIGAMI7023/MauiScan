@@ -24,7 +24,7 @@ internal static class NativeOpenCv
     /// <param name="mlY">ML 预测的 Y 坐标</param>
     /// <param name="refinedX">输出精修后的 X 坐标</param>
     /// <param name="refinedY">输出精修后的 Y 坐标</param>
-    /// <returns>1=成功, 0=失败</returns>
+    /// <returns>置信度级别：0=失败, 1=低置信度, 2=高置信度</returns>
     [DllImport(LibraryName, EntryPoint = "scanner_refine_corner", CallingConvention = CallingConvention.Cdecl)]
     public static extern int RefineCorner(
         byte[] inputData,

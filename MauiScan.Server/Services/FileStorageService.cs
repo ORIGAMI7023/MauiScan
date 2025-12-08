@@ -1,4 +1,5 @@
 using MauiScan.Server.Models;
+using SixLabors.ImageSharp;
 
 namespace MauiScan.Server.Services;
 
@@ -53,7 +54,7 @@ public class FileStorageService : IFileStorageService
             FileSize = fileInfo.Length,
             Width = width,
             Height = height,
-            ScannedAt = DateTime.UtcNow,
+            ScannedAt = DateTime.UtcNow.AddHours(8),  // 转换为北京时间 (UTC+8)
             DownloadUrl = $"/api/scans/{fileName}"
         };
 
@@ -100,16 +101,29 @@ public class FileStorageService : IFileStorageService
 
         foreach (var file in files)
         {
-            // 尝试加载元数据，如果不存在则使用默认值
+            // 尝试加载元数据
             var metadata = await LoadMetadataAsync(file.Name);
+
+            // 如果元数据不存在，尝试从图像文件重建
+            if (metadata == null)
+            {
+                metadata = await ReconstructMetadataFromImageAsync(file.FullName);
+            }
+
+            // 确保时间是北京时间（如果是旧数据可能是UTC时间）
+            if (metadata != null)
+            {
+                // 转换为北京时间 (UTC+8)
+                metadata.ScannedAt = metadata.ScannedAt.AddHours(8);
+            }
 
             result.Add(metadata ?? new ScanImageDto
             {
                 FileName = file.Name,
                 FileSize = file.Length,
-                Width = 0,
-                Height = 0,
-                ScannedAt = file.LastWriteTimeUtc,
+                Width = -1,  // 使用 -1 表示未知尺寸（而非0）
+                Height = -1,
+                ScannedAt = file.LastWriteTimeUtc.AddHours(8),  // 转换为北京时间
                 DownloadUrl = $"/api/scans/{file.Name}"
             });
         }
@@ -143,6 +157,47 @@ public class FileStorageService : IFileStorageService
         }
         catch
         {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从图像文件重建元数据（用于没有JSON元数据的旧文件）
+    /// </summary>
+    private async Task<ScanImageDto?> ReconstructMetadataFromImageAsync(string imagePath)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(imagePath);
+
+            // 使用 SixLabors.ImageSharp 读取图像尺寸
+            using var stream = File.OpenRead(imagePath);
+            var imageInfo = await Image.IdentifyAsync(stream);
+
+            if (imageInfo == null)
+            {
+                return null;
+            }
+
+            var metadata = new ScanImageDto
+            {
+                FileName = Path.GetFileName(imagePath),
+                FileSize = fileInfo.Length,
+                Width = imageInfo.Width,
+                Height = imageInfo.Height,
+                ScannedAt = fileInfo.LastWriteTimeUtc,  // 将在调用方转换为北京时间
+                DownloadUrl = $"/api/scans/{Path.GetFileName(imagePath)}"
+            };
+
+            // 保存元数据，避免下次重复读取
+            await SaveMetadataAsync(Path.GetFileName(imagePath), metadata);
+
+            return metadata;
+        }
+        catch (Exception ex)
+        {
+            // 记录错误但返回null，允许使用fallback值
+            Console.WriteLine($"Failed to reconstruct metadata for {imagePath}: {ex.Message}");
             return null;
         }
     }

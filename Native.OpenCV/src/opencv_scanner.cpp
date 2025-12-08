@@ -11,6 +11,16 @@
 #include <cstring>
 #include <cmath>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define LOG_TAG "OpenCVScanner"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGD(...)
+#define LOGE(...)
+#endif
+
 using namespace cv;
 
 // 版本信息
@@ -137,9 +147,28 @@ static bool detect_document_bounds_internal(
         Mat enhanced;
         blurred.convertTo(enhanced, -1, 1.15, 0); // alpha=1.15 (对比度), beta=0 (亮度)
 
-        // 4. Canny 边缘检测
+        // 4. 多尺度Canny边缘检测（5个尺度融合）
         Mat edges;
-        Canny(enhanced, edges, params->canny_threshold1, params->canny_threshold2);
+        std::vector<Mat> edges_list;
+
+        // 5个尺度：kernel 3x3, 5x5, 7x7, 9x9, 11x11
+        for (int i = 0; i < 5; i++) {
+            int scale_kernel_size = 3 + i * 2; // 3, 5, 7, 9, 11
+
+            Mat scale_blurred;
+            GaussianBlur(enhanced, scale_blurred, Size(scale_kernel_size, scale_kernel_size), 0);
+
+            Mat scale_edges;
+            Canny(scale_blurred, scale_edges, params->canny_threshold1, params->canny_threshold2);
+
+            edges_list.push_back(scale_edges);
+        }
+
+        // 融合所有尺度的边缘（取最大值）
+        edges = edges_list[0].clone();
+        for (size_t i = 1; i < edges_list.size(); i++) {
+            max(edges, edges_list[i], edges);
+        }
 
         // 5. 查找轮廓
         std::vector<std::vector<Point>> contours;
@@ -479,7 +508,10 @@ int32_t scanner_refine_corner(
     float* refined_x,
     float* refined_y
 ) {
+    LOGD("[RefineCorner] Called with input_size=%d, ml=(%f, %f)", input_size, ml_x, ml_y);
+
     if (!input_data || input_size <= 0 || !refined_x || !refined_y) {
+        LOGE("[RefineCorner] Invalid parameters");
         return 0;
     }
 
@@ -489,13 +521,22 @@ int32_t scanner_refine_corner(
         Mat gray = imdecode(buffer, IMREAD_GRAYSCALE);
 
         if (gray.empty()) {
+            LOGE("[RefineCorner] Failed to decode image");
             return 0;
         }
 
-        const int PATCH_SIZE = 64;
+        LOGD("[RefineCorner] Image decoded: %dx%d", gray.cols, gray.rows);
+
+        // 根据图像尺寸动态调整 patch 大小
+        int imageMinDim = std::min(gray.cols, gray.rows);
+        int PATCH_SIZE = std::min(256, imageMinDim / 12);  // 对于4080x3060，约为255
+        PATCH_SIZE = std::max(64, PATCH_SIZE);  // 最小64
+
         int centerX = static_cast<int>(ml_x);
         int centerY = static_cast<int>(ml_y);
         int halfPatch = PATCH_SIZE / 2;
+
+        LOGD("[RefineCorner] Patch size: %d (image: %dx%d)", PATCH_SIZE, gray.cols, gray.rows);
 
         // 2. 裁剪 patch（防止越界）
         int x1 = std::max(0, centerX - halfPatch);
@@ -503,21 +544,28 @@ int32_t scanner_refine_corner(
         int x2 = std::min(gray.cols, centerX + halfPatch);
         int y2 = std::min(gray.rows, centerY + halfPatch);
 
+        LOGD("[RefineCorner] Patch ROI: (%d,%d) to (%d,%d)", x1, y1, x2, y2);
+
         if (x2 - x1 < 20 || y2 - y1 < 20) {
+            LOGE("[RefineCorner] Patch too small: %dx%d", x2-x1, y2-y1);
             return 0; // Patch 太小
         }
 
         Mat patch = gray(Rect(x1, y1, x2 - x1, y2 - y1));
 
-        // 3. Canny 边缘检测
+        // 3. Canny 边缘检测（降低阈值，更容易检测边缘）
         Mat edges;
-        Canny(patch, edges, 50, 150, 3);
+        Canny(patch, edges, 30, 100, 3);
 
-        // 4. Hough 直线检测
+        // 4. Hough 直线检测（放宽参数）
         std::vector<Vec4i> lines;
-        HoughLinesP(edges, lines, 1, CV_PI / 180, 30, 20, 5);
+        int minLineLength = std::max(10, PATCH_SIZE / 8);  // 至少 patch 的 1/8
+        HoughLinesP(edges, lines, 1, CV_PI / 180, 15, minLineLength, 10);
+
+        LOGD("[RefineCorner] Hough lines detected: %zu", lines.size());
 
         if (lines.size() < 2) {
+            LOGE("[RefineCorner] Too few lines: %zu", lines.size());
             return 0; // 直线太少
         }
 
@@ -534,8 +582,11 @@ int32_t scanner_refine_corner(
             }
         }
 
+        LOGD("[RefineCorner] Line groups: H=%zu V=%zu", horizontalLines.size(), verticalLines.size());
+
         if (horizontalLines.empty() || verticalLines.empty()) {
-            return 0;
+            LOGE("[RefineCorner] Missing line groups: H=%zu V=%zu", horizontalLines.size(), verticalLines.size());
+            return 0;  // 失败：缺少必要的直线
         }
 
         // 6. 拟合直线（最小二乘法）
@@ -574,11 +625,14 @@ int32_t scanner_refine_corner(
 
         // 7. 计算交点
         if (std::abs(k1 - k2) < 1e-6) {
+            LOGE("[RefineCorner] Lines are parallel: k1=%f k2=%f", k1, k2);
             return 0; // 平行线
         }
 
         float x = (b2 - b1) / (k1 - k2);
         float y = k1 * x + b1;
+
+        LOGD("[RefineCorner] Intersection in patch: (%f, %f)", x, y);
 
         // 8. 转换回原图坐标
         *refined_x = x1 + x;
@@ -590,13 +644,32 @@ int32_t scanner_refine_corner(
             std::pow(*refined_y - ml_y, 2)
         );
 
-        if (distance > PATCH_SIZE) {
-            return 0; // 超出搜索范围
+        LOGD("[RefineCorner] Refined: (%f, %f), distance from ML: %f", *refined_x, *refined_y, distance);
+
+        // 安全检查：精修结果不能偏移太远（PATCH_SIZE 的 2/3）
+        float maxAllowedDistance = PATCH_SIZE * 0.67f;
+        if (distance > maxAllowedDistance) {
+            LOGE("[RefineCorner] Distance too large: %f > %f (max allowed)", distance, maxAllowedDistance);
+            return 0; // 超出合理范围
         }
 
-        return 1; // 成功
+        // 根据直线数量评估置信度
+        // 0 = 失败
+        // 1 = 低置信度（各1条线）
+        // 2 = 高置信度（各2条线以上）
+        int confidence = 0;
+        if (horizontalLines.size() >= 2 && verticalLines.size() >= 2) {
+            confidence = 2;  // 高置信度：证据充分
+            LOGD("[RefineCorner] Success with HIGH confidence (H=%zu, V=%zu)", horizontalLines.size(), verticalLines.size());
+        } else if (horizontalLines.size() >= 1 && verticalLines.size() >= 1) {
+            confidence = 1;  // 低置信度：证据勉强
+            LOGD("[RefineCorner] Success with LOW confidence (H=%zu, V=%zu)", horizontalLines.size(), verticalLines.size());
+        }
+
+        return confidence;
     }
     catch (const std::exception& e) {
+        LOGE("[RefineCorner] Exception: %s", e.what());
         return 0;
     }
 }

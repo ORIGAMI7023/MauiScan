@@ -30,6 +30,12 @@ namespace MauiScan
             // 注册服务（使用 Native C++ OpenCV 实现）
             builder.Services.AddSingleton<IImageProcessingService, NativeImageProcessingService>();
 
+            // 注册图像裁剪服务
+            builder.Services.AddSingleton<ImageCropService>();
+
+            // 注册两阶段检测服务
+            builder.Services.AddSingleton<TwoStageDetectionService>();
+
             // 注册 ML 推理服务
             builder.Services.AddSingleton<IMLInferenceService>(sp =>
             {
@@ -62,6 +68,7 @@ namespace MauiScan
             builder.Services.AddTransient<CameraPage>();
             builder.Services.AddTransient<HistoryPage>();
             builder.Services.AddTransient<MLTestPage>();  // ML 测试页面
+            builder.Services.AddTransient<TwoStageDetectionTestPage>();  // 两阶段检测测试页面
 
 #if DEBUG
     		builder.Logging.AddDebug();

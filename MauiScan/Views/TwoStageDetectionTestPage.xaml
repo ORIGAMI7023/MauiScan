@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="MauiScan.Views.TwoStageDetectionTestPage"
+             Title="两阶段检测测试">
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- 控制按钮区域 -->
+        <Grid Grid.Row="0"
+              Padding="10"
+              ColumnDefinitions="*,*,*"
+              ColumnSpacing="10"
+              BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray900}}">
+            <Button Grid.Column="0"
+                    Text="📷 拍照"
+                    Clicked="OnTakePhotoClicked"
+                    BackgroundColor="{StaticResource Primary}"/>
+            <Button Grid.Column="1"
+                    Text="🖼️ 选择图片"
+                    Clicked="OnPickImageClicked"
+                    BackgroundColor="{StaticResource Primary}"/>
+            <Button Grid.Column="2"
+                    Text="🗑️ 清除"
+                    Clicked="OnClearClicked"
+                    BackgroundColor="{StaticResource Tertiary}"/>
+        </Grid>
+
+        <!-- 图像显示和结果区域 -->
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Padding="10" Spacing="15">
+                <!-- 检测结果图像 -->
+                <Border StrokeThickness="2"
+                        Stroke="{AppThemeBinding Light={StaticResource Gray300}, Dark={StaticResource Gray700}}"
+                        StrokeShape="RoundRectangle 8"
+                        BackgroundColor="{AppThemeBinding Light={StaticResource Gray50}, Dark={StaticResource Gray950}}">
+                    <Image x:Name="ResultImage"
+                           Aspect="AspectFit"
+                           HeightRequest="400"
+                           MinimumHeightRequest="200"/>
+                </Border>
+
+                <!-- 幕布检测结果 -->
+                <Border StrokeThickness="3"
+                        Stroke="Green"
+                        Padding="12"
+                        StrokeShape="RoundRectangle 8"
+                        BackgroundColor="{AppThemeBinding Light=#E8F5E9, Dark=#1B5E20}">
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="🖥️ 幕布检测 (Stage 1)"
+                               FontAttributes="Bold"
+                               FontSize="16"
+                               TextColor="Green"/>
+                        <Label x:Name="ScreenStatusLabel"
+                               Text="⏸️ 未检测"
+                               FontSize="14"/>
+                        <Label x:Name="ScreenConfidenceLabel"
+                               Text="置信度: -"
+                               FontSize="12"/>
+                        <Label x:Name="ScreenQuadLabel"
+                               FontSize="10"
+                               TextColor="{AppThemeBinding Light={StaticResource Gray600}, Dark={StaticResource Gray400}}"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- PPT检测结果 -->
+                <Border StrokeThickness="3"
+                        Stroke="Red"
+                        Padding="12"
+                        StrokeShape="RoundRectangle 8"
+                        BackgroundColor="{AppThemeBinding Light=#FFEBEE, Dark=#B71C1C}">
+                    <VerticalStackLayout Spacing="8">
+                        <Label Text="📄 PPT检测 (Stage 2)"
+                               FontAttributes="Bold"
+                               FontSize="16"
+                               TextColor="Red"/>
+                        <Label x:Name="PptStatusLabel"
+                               Text="⏸️ 未检测"
+                               FontSize="14"/>
+                        <Label x:Name="PptConfidenceLabel"
+                               Text="置信度: -"
+                               FontSize="12"/>
+                        <Label x:Name="PptQuadLabel"
+                               FontSize="10"
+                               TextColor="{AppThemeBinding Light={StaticResource Gray600}, Dark={StaticResource Gray400}}"/>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- 检测总结 -->
+                <Border x:Name="SummaryBorder"
+                        IsVisible="False"
+                        StrokeThickness="2"
+                        Stroke="{AppThemeBinding Light={StaticResource Gray400}, Dark={StaticResource Gray600}}"
+                        Padding="12"
+                        StrokeShape="RoundRectangle 8"
+                        BackgroundColor="{AppThemeBinding Light={StaticResource Gray100}, Dark={StaticResource Gray800}}">
+                    <VerticalStackLayout Spacing="6">
+                        <Label Text="📊 检测总结"
+                               FontAttributes="Bold"
+                               FontSize="14"/>
+                        <Label x:Name="SummaryLabel"
+                               FontSize="12"/>
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <!-- 状态栏 -->
+        <Border Grid.Row="2"
+                StrokeThickness="0"
+                BackgroundColor="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray800}}">
+            <Label x:Name="StatusLabel"
+                   Padding="12,8"
+                   Text="就绪 - 选择一张幕布+PPT的照片开始测试"
+                   FontSize="12"
+                   HorizontalTextAlignment="Center"/>
+        </Border>
+    </Grid>
+</ContentPage>
