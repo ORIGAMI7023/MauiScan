@@ -6,9 +6,19 @@ namespace MauiScan.ML.Models;
 public class MLDetectionResult
 {
     /// <summary>
-    /// 检测到的四个角点坐标（左上、右上、右下、左下）
+    /// 检测到的四个角点坐标（左上、右上、右下、左下）- 最终结果（可能经过 CV 精修）
     /// </summary>
     public QuadrilateralPoints Corners { get; set; } = new();
+
+    /// <summary>
+    /// ML 原始输出的角点坐标（未经 CV 精修）
+    /// </summary>
+    public QuadrilateralPoints? MLRawCorners { get; set; }
+
+    /// <summary>
+    /// ML 输出的归一化坐标 [x1, y1, x2, y2, x3, y3, x4, y4]
+    /// </summary>
+    public float[]? NormalizedCoordinates { get; set; }
 
     /// <summary>
     /// 整体置信度 (0-1)，表示模型对检测结果的确信程度

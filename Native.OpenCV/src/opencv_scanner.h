@@ -124,6 +124,26 @@ SCANNER_API void scanner_free_result(ScanResult* result);
  */
 SCANNER_API const char* scanner_get_version(void);
 
+/**
+ * 精修单个角点（使用 Canny + Hough 算法）
+ *
+ * @param input_data    输入图像数据（JPEG/PNG 编码）
+ * @param input_size    输入数据大小
+ * @param ml_x          ML 预测的 X 坐标
+ * @param ml_y          ML 预测的 Y 坐标
+ * @param refined_x     输出精修后的 X 坐标
+ * @param refined_y     输出精修后的 Y 坐标
+ * @return              1=成功, 0=失败
+ */
+SCANNER_API int32_t scanner_refine_corner(
+    const uint8_t* input_data,
+    int32_t input_size,
+    float ml_x,
+    float ml_y,
+    float* refined_x,
+    float* refined_y
+);
+
 #ifdef __cplusplus
 }
 #endif

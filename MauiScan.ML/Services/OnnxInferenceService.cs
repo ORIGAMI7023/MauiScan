@@ -7,6 +7,8 @@ using SixLabors.ImageSharp.Processing;
 
 #if WINDOWS
 using OpenCvSharp;
+#elif ANDROID || IOS || MACCATALYST
+using MauiScan.ML.Interop;
 #endif
 
 namespace MauiScan.ML.Services;
@@ -31,7 +33,7 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
     /// <summary>
     /// 检测图片中的四个角点（使用预处理的 RGB 数据）
     /// </summary>
-    public async Task<MLDetectionResult> DetectCornersFromRgbAsync(float[] rgbData, int originalWidth, int originalHeight)
+    public async Task<MLDetectionResult> DetectCornersFromRgbAsync(float[] rgbData, int originalWidth, int originalHeight, byte[]? originalImageBytes = null)
     {
         System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersFromRgbAsync started, original: {originalWidth}x{originalHeight}");
 
@@ -47,8 +49,11 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
             var sw = System.Diagnostics.Stopwatch.StartNew();
 
             // 直接从 float[] 构建 Tensor（CHW 格式）
-            var inputTensor = new DenseTensor<float>(new[] { 1, 3, _config.InputHeight, _config.InputWidth });
-            Buffer.BlockCopy(rgbData, 0, inputTensor.Buffer.ToArray(), 0, rgbData.Length * sizeof(float));
+            // ⚠️ 使用 Memory<float> 构造函数，直接使用现有数组避免复制
+            System.Diagnostics.Debug.WriteLine($"[ML] Input rgbData length: {rgbData.Length}, expected: {3 * _config.InputHeight * _config.InputWidth}");
+            System.Diagnostics.Debug.WriteLine($"[ML] rgbData stats - min: {rgbData.Min():F3}, max: {rgbData.Max():F3}, mean: {rgbData.Average():F3}");
+
+            var inputTensor = new DenseTensor<float>(rgbData, new[] { 1, 3, _config.InputHeight, _config.InputWidth });
             System.Diagnostics.Debug.WriteLine($"[ML] Tensor created from RGB data, took {sw.ElapsedMilliseconds}ms");
 
             // 运行推理
@@ -78,23 +83,31 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
                 BottomLeftY = coordinates[7] * originalHeight
             };
 
-            // 基于坐标合理性计算置信度
-            float confidence = CalculateConfidenceFromCoordinates(coordinates);
-            System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
+            System.Diagnostics.Debug.WriteLine($"[ML] ML corners: TL({corners.TopLeftX:F1},{corners.TopLeftY:F1}) TR({corners.TopRightX:F1},{corners.TopRightY:F1}) BR({corners.BottomRightX:F1},{corners.BottomRightY:F1}) BL({corners.BottomLeftX:F1},{corners.BottomLeftY:F1})");
 
-            var cornerConfidences = new float[4];
-            for (int i = 0; i < 4; i++)
+            // ⭐ Stage 2: CV 精修（如果提供了原图数据）
+            QuadrilateralPoints finalCorners;
+            if (originalImageBytes != null)
             {
-                cornerConfidences[i] = confidence;
+                System.Diagnostics.Debug.WriteLine($"[ML] Starting Stage 2: Corner refinement");
+                finalCorners = RefineCorners(corners, originalImageBytes, originalWidth, originalHeight);
+                System.Diagnostics.Debug.WriteLine($"[ML] Refined corners: TL({finalCorners.TopLeftX:F1},{finalCorners.TopLeftY:F1}) TR({finalCorners.TopRightX:F1},{finalCorners.TopRightY:F1}) BR({finalCorners.BottomRightX:F1},{finalCorners.BottomRightY:F1}) BL({finalCorners.BottomLeftX:F1},{finalCorners.BottomLeftY:F1})");
+            }
+            else
+            {
+                System.Diagnostics.Debug.WriteLine($"[ML] No original image provided, skipping CV refinement");
+                finalCorners = corners;
             }
 
             System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersFromRgbAsync completed successfully");
 
             return new MLDetectionResult
             {
-                Corners = corners,
-                Confidence = confidence,
-                CornerConfidences = cornerConfidences
+                Corners = finalCorners,
+                MLRawCorners = corners,  // 保存 ML 原始输出（用于调试对比）
+                NormalizedCoordinates = coordinates,  // 保存归一化坐标
+                Confidence = 1.0f,
+                CornerConfidences = new float[] { 1.0f, 1.0f, 1.0f, 1.0f }
             };
         });
     }
@@ -154,20 +167,13 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
                 BottomLeftY = coordinates[7] * originalHeight
             };
 
-            float confidence = CalculateConfidenceFromCoordinates(coordinates);
-            System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
-
-            var cornerConfidences = new float[4];
-            for (int i = 0; i < 4; i++)
-            {
-                cornerConfidences[i] = confidence;
-            }
-
             return new MLDetectionResult
             {
                 Corners = corners,
-                Confidence = confidence,
-                CornerConfidences = cornerConfidences
+                MLRawCorners = corners,  // 此方法无 CV 精修，两者相同
+                NormalizedCoordinates = coordinates,
+                Confidence = 1.0f,
+                CornerConfidences = new float[] { 1.0f, 1.0f, 1.0f, 1.0f }
             };
         });
     }
@@ -190,19 +196,25 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
         {
             System.Diagnostics.Debug.WriteLine($"[ML] Background task started");
 
-            // 1. 加载和预处理图片
+            // 1. 加载图片
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            System.Diagnostics.Debug.WriteLine($"[ML] Loading image with ImageSharp...");
             using var image = Image.Load<Rgb24>(imageBytes);
             var originalWidth = image.Width;
             var originalHeight = image.Height;
             System.Diagnostics.Debug.WriteLine($"[ML] Image loaded: {originalWidth}x{originalHeight}, took {sw.ElapsedMilliseconds}ms");
 
-            // 2. 缩放到模型输入尺寸（如果需要）
+            // 2. 缩放到模型输入尺寸（使用 Bilinear 插值，与 Python PIL 一致）
             if (originalWidth != _config.InputWidth || originalHeight != _config.InputHeight)
             {
                 sw.Restart();
-                image.Mutate(x => x.Resize(_config.InputWidth, _config.InputHeight));
-                System.Diagnostics.Debug.WriteLine($"[ML] Image resized to {_config.InputWidth}x{_config.InputHeight}, took {sw.ElapsedMilliseconds}ms");
+                image.Mutate(x => x.Resize(new SixLabors.ImageSharp.Processing.ResizeOptions
+                {
+                    Size = new SixLabors.ImageSharp.Size(_config.InputWidth, _config.InputHeight),
+                    Sampler = KnownResamplers.Triangle,  // Triangle = Bilinear
+                    Mode = SixLabors.ImageSharp.Processing.ResizeMode.Stretch
+                }));
+                System.Diagnostics.Debug.WriteLine($"[ML] Image resized to {_config.InputWidth}x{_config.InputHeight} (Bilinear), took {sw.ElapsedMilliseconds}ms");
             }
             else
             {
@@ -213,6 +225,18 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
             sw.Restart();
             var inputTensor = ImageToTensor(image);
             System.Diagnostics.Debug.WriteLine($"[ML] Tensor created, took {sw.ElapsedMilliseconds}ms");
+
+            // 调试：打印像素统计信息
+            var tensorData = inputTensor.ToArray();
+            System.Diagnostics.Debug.WriteLine($"[ML] Tensor stats - min: {tensorData.Min():F3}, max: {tensorData.Max():F3}, mean: {tensorData.Average():F3}");
+            // 打印前10个像素的RGB值（CHW格式，所以R在前512*512个）
+            int pixelCount = _config.InputWidth * _config.InputHeight;
+            var first10R = string.Join(", ", tensorData.Take(10).Select(v => v.ToString("F3")));
+            var first10G = string.Join(", ", tensorData.Skip(pixelCount).Take(10).Select(v => v.ToString("F3")));
+            var first10B = string.Join(", ", tensorData.Skip(2 * pixelCount).Take(10).Select(v => v.ToString("F3")));
+            System.Diagnostics.Debug.WriteLine($"[ML] First 10 R: {first10R}");
+            System.Diagnostics.Debug.WriteLine($"[ML] First 10 G: {first10G}");
+            System.Diagnostics.Debug.WriteLine($"[ML] First 10 B: {first10B}");
 
             // 4. 运行推理
             sw.Restart();
@@ -249,24 +273,15 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
             System.Diagnostics.Debug.WriteLine($"[ML] Starting Stage 2: Corner refinement");
             var refinedCorners = RefineCorners(corners, imageBytes, originalWidth, originalHeight);
 
-            // 8. 基于坐标合理性计算置信度（因为模型置信度头未训练）
-            // 检查：四边形是否合理（顺时针顺序、面积合理、角度合理）
-            float confidence = CalculateConfidenceFromCoordinates(coordinates);
-            System.Diagnostics.Debug.WriteLine($"[ML] Calculated confidence: {confidence:F3}");
-
-            var cornerConfidences = new float[4];
-            for (int i = 0; i < 4; i++)
-            {
-                cornerConfidences[i] = confidence;
-            }
-
             System.Diagnostics.Debug.WriteLine($"[ML] DetectCornersAsync completed successfully (with refinement)");
 
             return new MLDetectionResult
             {
-                Corners = refinedCorners, // ⭐ 使用精修后的坐标
-                Confidence = confidence,
-                CornerConfidences = cornerConfidences
+                Corners = refinedCorners,
+                MLRawCorners = corners,  // 保存 ML 原始输出（用于调试对比）
+                NormalizedCoordinates = coordinates,  // 保存归一化坐标
+                Confidence = 1.0f,
+                CornerConfidences = new float[] { 1.0f, 1.0f, 1.0f, 1.0f }
             };
         });
     }
@@ -393,70 +408,6 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
         {
             _initLock.Release();
         }
-    }
-
-    /// <summary>
-    /// 基于坐标合理性计算置信度
-    /// 检查四边形是否符合 PPT 投影的几何特征
-    /// </summary>
-    private float CalculateConfidenceFromCoordinates(float[] coords)
-    {
-        // coords: [x1, y1, x2, y2, x3, y3, x4, y4]
-        // 顺序: 左上(0), 右上(1), 右下(2), 左下(3)
-
-        float score = 1.0f;
-
-        // 1. 检查坐标是否在有效范围 [0, 1] 内
-        for (int i = 0; i < 8; i++)
-        {
-            if (coords[i] < 0 || coords[i] > 1)
-            {
-                score *= 0.5f; // 超出范围，降低置信度
-            }
-        }
-
-        // 2. 检查 X 坐标顺序：左 < 右
-        float leftX = (coords[0] + coords[6]) / 2;   // 左上和左下的平均 X
-        float rightX = (coords[2] + coords[4]) / 2;  // 右上和右下的平均 X
-        if (leftX >= rightX)
-        {
-            score *= 0.3f; // X 顺序错误
-        }
-
-        // 3. 检查 Y 坐标顺序：上 < 下
-        float topY = (coords[1] + coords[3]) / 2;    // 左上和右上的平均 Y
-        float bottomY = (coords[5] + coords[7]) / 2; // 右下和左下的平均 Y
-        if (topY >= bottomY)
-        {
-            score *= 0.3f; // Y 顺序错误
-        }
-
-        // 4. 检查四边形面积是否合理（至少占图片 5%，不超过 95%）
-        float width = rightX - leftX;
-        float height = bottomY - topY;
-        float area = width * height;
-
-        if (area < 0.05f)
-        {
-            score *= 0.5f; // 太小
-        }
-        else if (area > 0.95f)
-        {
-            score *= 0.8f; // 太大（可能是整张图）
-        }
-
-        // 5. 检查宽高比是否合理（PPT 通常是 4:3 或 16:9）
-        if (width > 0 && height > 0)
-        {
-            float aspectRatio = width / height;
-            // 合理范围：0.5 到 3.0
-            if (aspectRatio < 0.5f || aspectRatio > 3.0f)
-            {
-                score *= 0.7f;
-            }
-        }
-
-        return Math.Clamp(score, 0.0f, 1.0f);
     }
 
     /// <summary>
@@ -753,9 +704,61 @@ public class OnnxInferenceService : IMLInferenceService, IDisposable
         return new Point2f(x, y);
     }
 
+#elif ANDROID || IOS || MACCATALYST
+    /// <summary>
+    /// 精修ML预测的角点（使用 Native OpenCV）
+    /// </summary>
+    private QuadrilateralPoints RefineCorners(
+        QuadrilateralPoints mlCorners,
+        byte[] imageBytes,
+        int originalWidth,
+        int originalHeight)
+    {
+        System.Diagnostics.Debug.WriteLine($"[Refinement] Starting Native OpenCV corner refinement on {originalWidth}x{originalHeight} image");
+
+        try
+        {
+            var refined = new QuadrilateralPoints
+            {
+                TopLeftX = mlCorners.TopLeftX,
+                TopLeftY = mlCorners.TopLeftY,
+                TopRightX = mlCorners.TopRightX,
+                TopRightY = mlCorners.TopRightY,
+                BottomRightX = mlCorners.BottomRightX,
+                BottomRightY = mlCorners.BottomRightY,
+                BottomLeftX = mlCorners.BottomLeftX,
+                BottomLeftY = mlCorners.BottomLeftY
+            };
+
+            // 精修4个角点
+            int success = NativeOpenCv.RefineCorner(imageBytes, imageBytes.Length,
+                mlCorners.TopLeftX, mlCorners.TopLeftY, out float tlX, out float tlY);
+            if (success == 1) { refined.TopLeftX = tlX; refined.TopLeftY = tlY; }
+
+            success = NativeOpenCv.RefineCorner(imageBytes, imageBytes.Length,
+                mlCorners.TopRightX, mlCorners.TopRightY, out float trX, out float trY);
+            if (success == 1) { refined.TopRightX = trX; refined.TopRightY = trY; }
+
+            success = NativeOpenCv.RefineCorner(imageBytes, imageBytes.Length,
+                mlCorners.BottomRightX, mlCorners.BottomRightY, out float brX, out float brY);
+            if (success == 1) { refined.BottomRightX = brX; refined.BottomRightY = brY; }
+
+            success = NativeOpenCv.RefineCorner(imageBytes, imageBytes.Length,
+                mlCorners.BottomLeftX, mlCorners.BottomLeftY, out float blX, out float blY);
+            if (success == 1) { refined.BottomLeftX = blX; refined.BottomLeftY = blY; }
+
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Native OpenCV refinement completed successfully");
+            return refined;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Refinement] Native OpenCV refinement failed: {ex.Message}");
+            return mlCorners;
+        }
+    }
 #else
     /// <summary>
-    /// 精修ML预测的角点（非 Windows 平台降级实现）
+    /// 精修ML预测的角点（其他平台降级实现）
     /// </summary>
     private QuadrilateralPoints RefineCorners(
         QuadrilateralPoints mlCorners,

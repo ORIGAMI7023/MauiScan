@@ -60,19 +60,34 @@
                            FontSize="18"
                            FontAttributes="Bold"/>
 
-                    <Label x:Name="ConfidenceLabel"
-                           FontSize="14"/>
-
-                    <Label x:Name="QualityLabel"
-                           FontSize="14"/>
-
-                    <Label x:Name="CornersLabel"
-                           FontSize="12"
-                           LineBreakMode="WordWrap"/>
-
                     <Label x:Name="InferenceTimeLabel"
                            FontSize="12"
                            TextColor="{StaticResource Gray600}"/>
+
+                    <!-- ML 原始输出 vs CV 精修对比 -->
+                    <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="5">
+                        <Label Text="ML 原始输出 (蓝色)" Grid.Column="0" FontSize="12" FontAttributes="Bold" TextColor="Blue"/>
+                        <Label Text="CV 精修后 (红色)" Grid.Column="1" FontSize="12" FontAttributes="Bold" TextColor="Red"/>
+
+                        <Label x:Name="MLCornersLabel" Grid.Row="1" Grid.Column="0" FontSize="10" LineBreakMode="WordWrap"/>
+                        <Label x:Name="RefinedCornersLabel" Grid.Row="1" Grid.Column="1" FontSize="10" LineBreakMode="WordWrap"/>
+
+                        <Label x:Name="MLNormalizedLabel" Grid.Row="2" Grid.Column="0" FontSize="9" TextColor="Gray" LineBreakMode="WordWrap"/>
+                        <Label x:Name="RefinementDiffLabel" Grid.Row="2" Grid.Column="1" FontSize="9" TextColor="Gray" LineBreakMode="WordWrap"/>
+                    </Grid>
+
+                    <!-- 可视化对比图 -->
+                    <Label Text="角点可视化 (蓝=ML, 红=精修, 绿=连线)"
+                           FontSize="12"
+                           FontAttributes="Bold"
+                           Margin="0,10,0,0"/>
+
+                    <Border StrokeThickness="2"
+                            Stroke="{StaticResource Gray300}">
+                        <Image x:Name="VisualizationImage"
+                               HeightRequest="300"
+                               Aspect="AspectFit"/>
+                    </Border>
 
                     <!-- 透视变换结果 -->
                     <Label Text="透视变换结果"

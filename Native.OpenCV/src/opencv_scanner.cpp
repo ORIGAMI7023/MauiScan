@@ -469,3 +469,134 @@ void scanner_free_result(ScanResult* result) {
 const char* scanner_get_version(void) {
     return SCANNER_VERSION;
 }
+
+// 角点精修实现（复刻 Windows OpenCvSharp 逻辑）
+int32_t scanner_refine_corner(
+    const uint8_t* input_data,
+    int32_t input_size,
+    float ml_x,
+    float ml_y,
+    float* refined_x,
+    float* refined_y
+) {
+    if (!input_data || input_size <= 0 || !refined_x || !refined_y) {
+        return 0;
+    }
+
+    try {
+        // 1. 解码图像为灰度图
+        std::vector<uint8_t> buffer(input_data, input_data + input_size);
+        Mat gray = imdecode(buffer, IMREAD_GRAYSCALE);
+
+        if (gray.empty()) {
+            return 0;
+        }
+
+        const int PATCH_SIZE = 64;
+        int centerX = static_cast<int>(ml_x);
+        int centerY = static_cast<int>(ml_y);
+        int halfPatch = PATCH_SIZE / 2;
+
+        // 2. 裁剪 patch（防止越界）
+        int x1 = std::max(0, centerX - halfPatch);
+        int y1 = std::max(0, centerY - halfPatch);
+        int x2 = std::min(gray.cols, centerX + halfPatch);
+        int y2 = std::min(gray.rows, centerY + halfPatch);
+
+        if (x2 - x1 < 20 || y2 - y1 < 20) {
+            return 0; // Patch 太小
+        }
+
+        Mat patch = gray(Rect(x1, y1, x2 - x1, y2 - y1));
+
+        // 3. Canny 边缘检测
+        Mat edges;
+        Canny(patch, edges, 50, 150, 3);
+
+        // 4. Hough 直线检测
+        std::vector<Vec4i> lines;
+        HoughLinesP(edges, lines, 1, CV_PI / 180, 30, 20, 5);
+
+        if (lines.size() < 2) {
+            return 0; // 直线太少
+        }
+
+        // 5. 直线聚类（水平 vs 垂直）
+        std::vector<Vec4i> horizontalLines, verticalLines;
+        for (const auto& line : lines) {
+            float dx = std::abs(static_cast<float>(line[2] - line[0]));
+            float dy = std::abs(static_cast<float>(line[3] - line[1]));
+
+            if (dx > dy) {
+                horizontalLines.push_back(line);
+            } else {
+                verticalLines.push_back(line);
+            }
+        }
+
+        if (horizontalLines.empty() || verticalLines.empty()) {
+            return 0;
+        }
+
+        // 6. 拟合直线（最小二乘法）
+        auto fitLine = [](const std::vector<Vec4i>& lines) -> std::pair<float, float> {
+            std::vector<Point2f> points;
+            for (const auto& line : lines) {
+                points.push_back(Point2f(line[0], line[1]));
+                points.push_back(Point2f(line[2], line[3]));
+            }
+
+            float avgX = 0, avgY = 0;
+            for (const auto& p : points) {
+                avgX += p.x;
+                avgY += p.y;
+            }
+            avgX /= points.size();
+            avgY /= points.size();
+
+            float numerator = 0, denominator = 0;
+            for (const auto& p : points) {
+                numerator += (p.x - avgX) * (p.y - avgY);
+                denominator += (p.x - avgX) * (p.x - avgX);
+            }
+
+            if (std::abs(denominator) < 1e-6) {
+                return {0, 0}; // 无效
+            }
+
+            float k = numerator / denominator;
+            float b = avgY - k * avgX;
+            return {k, b};
+        };
+
+        auto [k1, b1] = fitLine(horizontalLines);
+        auto [k2, b2] = fitLine(verticalLines);
+
+        // 7. 计算交点
+        if (std::abs(k1 - k2) < 1e-6) {
+            return 0; // 平行线
+        }
+
+        float x = (b2 - b1) / (k1 - k2);
+        float y = k1 * x + b1;
+
+        // 8. 转换回原图坐标
+        *refined_x = x1 + x;
+        *refined_y = y1 + y;
+
+        // 9. 验证合理性
+        float distance = std::sqrt(
+            std::pow(*refined_x - ml_x, 2) +
+            std::pow(*refined_y - ml_y, 2)
+        );
+
+        if (distance > PATCH_SIZE) {
+            return 0; // 超出搜索范围
+        }
+
+        return 1; // 成功
+    }
+    catch (const std::exception& e) {
+        return 0;
+    }
+}

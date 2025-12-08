@@ -29,8 +29,9 @@ public interface IMLInferenceService
     /// <param name="rgbData">512x512 图片的 RGB 数据，归一化到 [0,1]，CHW 格式</param>
     /// <param name="originalWidth">原始图片宽度</param>
     /// <param name="originalHeight">原始图片高度</param>
+    /// <param name="originalImageBytes">原始图片字节数据（用于 CV 精修，可选）</param>
     /// <returns>检测结果，坐标已反归一化到原始图片尺寸</returns>
-    Task<MLDetectionResult> DetectCornersFromRgbAsync(float[] rgbData, int originalWidth, int originalHeight);
+    Task<MLDetectionResult> DetectCornersFromRgbAsync(float[] rgbData, int originalWidth, int originalHeight, byte[]? originalImageBytes = null);
 
     /// <summary>
     /// 检查 ML 模型是否可用
