@@ -28,12 +28,34 @@ public class ScanSyncService
 
     public async Task ConnectAsync()
     {
-        if (_hubConnection != null)
+        // 如果已经连接，直接返回
+        if (_hubConnection?.State == HubConnectionState.Connected)
         {
-            await _hubConnection.StopAsync();
-            await _hubConnection.DisposeAsync();
+            return;
         }
 
+        // 如果连接存在但未连接，尝试重新连接
+        if (_hubConnection != null)
+        {
+            try
+            {
+                if (_hubConnection.State == HubConnectionState.Disconnected)
+                {
+                    await _hubConnection.StartAsync();
+                    ConnectionStateChanged?.Invoke(true);
+                    return;
+                }
+            }
+            catch
+            {
+                // 重连失败，重新创建连接
+                await _hubConnection.StopAsync();
+                await _hubConnection.DisposeAsync();
+                _hubConnection = null;
+            }
+        }
+
+        // 创建新连接
         _hubConnection = new HubConnectionBuilder()
             .WithUrl($"{_serverUrl}/hubs/scan")
             .WithAutomaticReconnect(new[] {
@@ -47,24 +69,28 @@ public class ScanSyncService
         // 监听新扫描事件
         _hubConnection.On<ScanImageDto>("ReceiveNewScan", scanImage =>
         {
+            System.Diagnostics.Debug.WriteLine($"[SignalR] 收到 ReceiveNewScan 事件: {scanImage.FileName}");
             NewScanReceived?.Invoke(scanImage);
         });
 
         // 监听连接状态变化
         _hubConnection.Reconnecting += _ =>
         {
+            System.Diagnostics.Debug.WriteLine("[SignalR] 正在重新连接...");
             ConnectionStateChanged?.Invoke(false);
             return Task.CompletedTask;
         };
 
         _hubConnection.Reconnected += _ =>
         {
+            System.Diagnostics.Debug.WriteLine("[SignalR] 已重新连接");
             ConnectionStateChanged?.Invoke(true);
             return Task.CompletedTask;
         };
 
         _hubConnection.Closed += _ =>
         {
+            System.Diagnostics.Debug.WriteLine("[SignalR] 连接已关闭");
             ConnectionStateChanged?.Invoke(false);
             return Task.CompletedTask;
         };
@@ -72,25 +98,36 @@ public class ScanSyncService
         try
         {
             await _hubConnection.StartAsync();
+            System.Diagnostics.Debug.WriteLine($"[SignalR] 连接成功: {_serverUrl}/hubs/scan");
             ConnectionStateChanged?.Invoke(true);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"SignalR 连接失败: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[SignalR] 连接失败: {ex.Message}");
             ConnectionStateChanged?.Invoke(false);
         }
     }
 
-    public async Task<bool> UploadScanAsync(byte[] imageData, int width, int height)
+    /// <summary>
+    /// 上传扫描图片，返回上传成功后的文件名（用于过滤自己上传的通知）
+    /// </summary>
+    public async Task<string?> UploadScanAsync(byte[] originalImageData, byte[] processedImageData, int width, int height)
     {
         try
         {
             using var content = new MultipartFormDataContent();
 
-            // 添加图片文件
-            var imageContent = new ByteArrayContent(imageData);
-            imageContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/jpeg");
-            content.Add(imageContent, "file", $"scan_{DateTime.Now:yyyyMMdd_HHmmss}.jpg");
+            System.Diagnostics.Debug.WriteLine($"准备上传 - Width: {width}, Height: {height}, OriginalSize: {originalImageData.Length}, ProcessedSize: {processedImageData.Length}");
+
+            // 添加原图
+            var originalContent = new ByteArrayContent(originalImageData);
+            originalContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/jpeg");
+            content.Add(originalContent, "originalImage", $"scan_{DateTime.Now:yyyyMMdd_HHmmss}_original.jpg");
+
+            // 添加处理后的图片
+            var processedContent = new ByteArrayContent(processedImageData);
+            processedContent.Headers.ContentType = MediaTypeHeaderValue.Parse("image/jpeg");
+            content.Add(processedContent, "processedImage", $"scan_{DateTime.Now:yyyyMMdd_HHmmss}_processed.jpg");
 
             // 添加宽高参数
             content.Add(new StringContent(width.ToString()), "width");
@@ -100,20 +137,23 @@ public class ScanSyncService
 
             if (response.IsSuccessStatusCode)
             {
-                System.Diagnostics.Debug.WriteLine("图片上传成功");
-                return true;
+                // 解析响应获取文件名
+                var uploadResponse = await response.Content.ReadFromJsonAsync<UploadResponse>();
+                var fileName = uploadResponse?.ScanImage?.FileName;
+                System.Diagnostics.Debug.WriteLine($"图片上传成功: {fileName}");
+                return fileName;
             }
             else
             {
                 var error = await response.Content.ReadAsStringAsync();
                 System.Diagnostics.Debug.WriteLine($"图片上传失败: {response.StatusCode}, {error}");
-                return false;
+                return null;
             }
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"图片上传异常: {ex.Message}");
-            return false;
+            return null;
         }
     }
 
@@ -163,6 +203,20 @@ public class ScanSyncService
             await _hubConnection.StopAsync();
             await _hubConnection.DisposeAsync();
             _hubConnection = null;
+        }
+    }
+
+    public async Task<bool> DeleteScanAsync(string fileName)
+    {
+        try
+        {
+            var response = await _httpClient.DeleteAsync($"/api/scans/{fileName}");
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"删除扫描失败: {ex.Message}");
+            return false;
         }
     }
 

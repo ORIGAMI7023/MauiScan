@@ -15,6 +15,7 @@ public partial class ScanPage : ContentPage
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
     private byte[]? _originalPhotoBytes; // 保存原始拍照图片（用于识别失败时的手动标注）
+    private string? _lastUploadedFileName; // 记录最近上传的文件名，避免收到自己上传的通知
 
     public ScanPage(
         ICameraService cameraService,
@@ -101,6 +102,9 @@ public partial class ScanPage : ContentPage
                 // 识别失败：显示原图 + 手动标注按钮（仅 Android）
                 StatusLabel.Text = $"自动识别失败 - {result.ErrorMessage ?? "未知错误"}";
 
+                // 上传失败的原图到 training 目录
+                _ = UploadToServerAsync(photoBytes, photoBytes, 0, 0);
+
 #if ANDROID
                 // 显示原图
                 _currentImageData = photoBytes;
@@ -138,6 +142,8 @@ public partial class ScanPage : ContentPage
             RotateButtonsGrid.IsVisible = true;
 
             // 4. 自动复制到剪贴板
+            System.Diagnostics.Debug.WriteLine($"扫描结果 - Width: {result.Width}, Height: {result.Height}");
+
             var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
             if (copied)
             {
@@ -149,7 +155,7 @@ public partial class ScanPage : ContentPage
             }
 
             // 5. 自动上传到服务器
-            _ = UploadToServerAsync(result.ImageData, result.Width, result.Height);
+            _ = UploadToServerAsync(_originalPhotoBytes, result.ImageData, result.Width, result.Height);
         }
         catch (Exception ex)
         {
@@ -272,7 +278,7 @@ public partial class ScanPage : ContentPage
                 }
 
                 // 上传到服务器
-                _ = UploadToServerAsync(annotationResult.ProcessedImageData, annotationResult.Width, annotationResult.Height);
+                _ = UploadToServerAsync(_originalPhotoBytes, annotationResult.ProcessedImageData, annotationResult.Width, annotationResult.Height);
 
                 // 上传训练数据（原图 + 标注信息）
                 _ = UploadTrainingDataAsync(_originalPhotoBytes, annotationResult.Corners, annotationResult.ProcessedImageData);
@@ -441,14 +447,16 @@ public partial class ScanPage : ContentPage
         // await _syncService.DisconnectAsync();
     }
 
-    private async Task UploadToServerAsync(byte[] imageData, int width, int height)
+    private async Task UploadToServerAsync(byte[] originalImageData, byte[] processedImageData, int width, int height)
     {
         try
         {
-            var success = await _syncService.UploadScanAsync(imageData, width, height);
-            if (success)
+            var uploadedFileName = await _syncService.UploadScanAsync(originalImageData, processedImageData, width, height);
+            if (uploadedFileName != null)
             {
-                System.Diagnostics.Debug.WriteLine("✓ 图片已上传到服务器");
+                // 记录上传的文件名，用于过滤自己上传的通知
+                _lastUploadedFileName = uploadedFileName;
+                System.Diagnostics.Debug.WriteLine($"✓ 图片已上传到服务器: {uploadedFileName}");
             }
             else
             {
@@ -465,6 +473,14 @@ public partial class ScanPage : ContentPage
     {
         try
         {
+            // 忽略自己刚上传的图片
+            if (_lastUploadedFileName != null && scanImage.FileName == _lastUploadedFileName)
+            {
+                System.Diagnostics.Debug.WriteLine($"忽略自己上传的图片: {scanImage.FileName}");
+                _lastUploadedFileName = null; // 重置
+                return;
+            }
+
             // 在主线程上更新 UI
             await MainThread.InvokeOnMainThreadAsync(async () =>
             {

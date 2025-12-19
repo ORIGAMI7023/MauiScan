@@ -2,18 +2,39 @@ using MauiScan.Models;
 using MauiScan.Services;
 using MauiScan.Services.Sync;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Windows.Input;
 
 namespace MauiScan.Views;
 
-public partial class HistoryPage : ContentPage
+public partial class HistoryPage : ContentPage, INotifyPropertyChanged
 {
     private readonly ScanSyncService _syncService;
     private readonly IClipboardService _clipboardService;
 
     public ObservableCollection<HistoryItemViewModel> HistoryItems { get; } = new();
-    public bool IsRefreshing { get; set; }
+
+    private bool _isRefreshing;
+    public bool IsRefreshing
+    {
+        get => _isRefreshing;
+        set
+        {
+            _isRefreshing = value;
+            OnPropertyChanged();
+        }
+    }
+
     public ICommand RefreshCommand { get; }
+    public ICommand DeleteCommand { get; }
+
+    public new event PropertyChangedEventHandler? PropertyChanged;
+
+    protected new void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 
     public HistoryPage(ScanSyncService syncService, IClipboardService clipboardService)
     {
@@ -23,29 +44,36 @@ public partial class HistoryPage : ContentPage
         _clipboardService = clipboardService;
 
         RefreshCommand = new Command(async () => await LoadHistoryAsync());
+        DeleteCommand = new Command<HistoryItemViewModel>(async (item) => await DeleteItemAsync(item));
 
         BindingContext = this;
     }
 
+    internal ScanSyncService SyncService => _syncService;
+
     protected override async void OnAppearing()
     {
         base.OnAppearing();
-        await LoadHistoryAsync();
+        await LoadHistoryAsync(showLoadingIndicator: true);
     }
 
-    private async Task LoadHistoryAsync()
+    private async Task LoadHistoryAsync(bool showLoadingIndicator = false)
     {
         try
         {
-            LoadingIndicator.IsRunning = true;
-            LoadingIndicator.IsVisible = true;
+            // 只在首次加载时显示独立的加载指示器
+            if (showLoadingIndicator && !IsRefreshing)
+            {
+                LoadingIndicator.IsRunning = true;
+                LoadingIndicator.IsVisible = true;
+            }
 
             var scans = await _syncService.GetRecentScansAsync(20);
 
             HistoryItems.Clear();
             foreach (var scan in scans)
             {
-                HistoryItems.Add(new HistoryItemViewModel(scan));
+                HistoryItems.Add(new HistoryItemViewModel(scan, _syncService));
             }
         }
         catch (Exception ex)
@@ -54,15 +82,16 @@ public partial class HistoryPage : ContentPage
         }
         finally
         {
-            LoadingIndicator.IsRunning = false;
-            LoadingIndicator.IsVisible = false;
+            // 隐藏加载指示器
+            if (LoadingIndicator.IsRunning)
+            {
+                LoadingIndicator.IsRunning = false;
+                LoadingIndicator.IsVisible = false;
+            }
+
+            // 停止下拉刷新动画
             IsRefreshing = false;
         }
-    }
-
-    private async void OnRefreshClicked(object sender, EventArgs e)
-    {
-        await LoadHistoryAsync();
     }
 
     private async void OnItemSelected(object? sender, SelectionChangedEventArgs e)
@@ -180,18 +209,69 @@ public partial class HistoryPage : ContentPage
             await DisplayAlert("错误", $"保存失败: {ex.Message}", "确定");
         }
     }
+
+    private async Task DeleteItemAsync(HistoryItemViewModel item)
+    {
+        var confirm = await DisplayAlert("确认删除",
+            $"确定要删除 {item.ScannedAtText} 的扫描记录吗？",
+            "删除", "取消");
+
+        if (!confirm) return;
+
+        try
+        {
+            LoadingIndicator.IsRunning = true;
+            LoadingIndicator.IsVisible = true;
+
+            var success = await _syncService.DeleteScanAsync(item.ScanImage.FileName);
+
+            if (success)
+            {
+                HistoryItems.Remove(item);
+            }
+            else
+            {
+                await DisplayAlert("错误", "删除失败", "确定");
+            }
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("错误", $"删除失败: {ex.Message}", "确定");
+        }
+        finally
+        {
+            LoadingIndicator.IsRunning = false;
+            LoadingIndicator.IsVisible = false;
+        }
+    }
 }
 
-public class HistoryItemViewModel
+public class HistoryItemViewModel : System.ComponentModel.INotifyPropertyChanged
 {
+    private readonly ScanSyncService _syncService;
+
     public ScanImageDto ScanImage { get; }
-    public ImageSource? ThumbnailSource { get; set; }
+
+    private ImageSource? _thumbnailSource;
+    public ImageSource? ThumbnailSource
+    {
+        get => _thumbnailSource;
+        set
+        {
+            _thumbnailSource = value;
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ThumbnailSource)));
+        }
+    }
+
     public string ScannedAtText { get; }
     public string SizeText { get; }
 
-    public HistoryItemViewModel(ScanImageDto scanImage)
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    public HistoryItemViewModel(ScanImageDto scanImage, ScanSyncService syncService)
     {
         ScanImage = scanImage;
+        _syncService = syncService;
         ScannedAtText = scanImage.ScannedAt.ToString("yyyy-MM-dd HH:mm:ss");
         SizeText = $"{scanImage.Width} × {scanImage.Height}";
 
@@ -203,9 +283,11 @@ public class HistoryItemViewModel
     {
         try
         {
-            var httpClient = new HttpClient();
-            var imageData = await httpClient.GetByteArrayAsync(ScanImage.DownloadUrl);
-            ThumbnailSource = ImageSource.FromStream(() => new MemoryStream(imageData));
+            var imageData = await _syncService.DownloadScanAsync(ScanImage.DownloadUrl);
+            if (imageData != null)
+            {
+                ThumbnailSource = ImageSource.FromStream(() => new MemoryStream(imageData));
+            }
         }
         catch
         {

@@ -35,18 +35,6 @@ typedef struct {
     int32_t bottom_left_y;
 } QuadPoints;
 
-// 浮点精度的四边形顶点（用于 ML 角点精修）
-typedef struct {
-    float top_left_x;
-    float top_left_y;
-    float top_right_x;
-    float top_right_y;
-    float bottom_right_x;
-    float bottom_right_y;
-    float bottom_left_x;
-    float bottom_left_y;
-} QuadPointsF;
-
 // 扫描结果结构
 typedef struct {
     uint8_t* image_data;      // JPEG 编码后的图像数据
@@ -137,19 +125,45 @@ SCANNER_API void scanner_free_result(ScanResult* result);
 SCANNER_API const char* scanner_get_version(void);
 
 /**
- * 精修 ML 预测的角点（使用传统 CV 方法达到亚像素精度）
+ * 精修单个角点（使用 Canny + Hough 算法）
  *
  * @param input_data    输入图像数据（JPEG/PNG 编码）
  * @param input_size    输入数据大小
- * @param ml_quad       ML 预测的粗略角点（浮点坐标）
- * @param refined_quad  输出精修后的角点（浮点坐标）
- * @return              1=成功精修, 0=精修失败（返回原始坐标）
+ * @param ml_x          ML 预测的 X 坐标
+ * @param ml_y          ML 预测的 Y 坐标
+ * @param refined_x     输出精修后的 X 坐标
+ * @param refined_y     输出精修后的 Y 坐标
+ * @return              置信度级别：
+ *                      0 = 失败（证据不足或异常）
+ *                      1 = 低置信度（各1条直线，证据勉强）
+ *                      2 = 高置信度（各2+条直线，证据充分）
  */
-SCANNER_API int32_t scanner_refine_corners(
+SCANNER_API int32_t scanner_refine_corner(
     const uint8_t* input_data,
     int32_t input_size,
-    const QuadPointsF* ml_quad,
-    QuadPointsF* refined_quad
+    float ml_x,
+    float ml_y,
+    float* refined_x,
+    float* refined_y
+);
+
+/**
+ * 基于亮度阈值检测PPT边界（用于第二阶段检测）
+ * 适用于PPT投影区域比幕布更亮的场景
+ *
+ * @param input_data    输入图像数据（裁剪后的幕布区域，JPEG/PNG 编码）
+ * @param input_size    输入数据大小
+ * @param brightness_threshold  亮度阈值增量（默认20，相对于平均亮度）
+ * @param min_area_ratio  最小面积占比（默认0.5，即50%）
+ * @param quad          输出四边形顶点
+ * @return              1=检测到, 0=未检测到
+ */
+SCANNER_API int32_t scanner_detect_bounds_by_brightness(
+    const uint8_t* input_data,
+    int32_t input_size,
+    int32_t brightness_threshold,
+    double min_area_ratio,
+    QuadPoints* quad
 );
 
 #ifdef __cplusplus

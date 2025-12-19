@@ -28,25 +28,35 @@ public class ScansController : ControllerBase
     /// 上传扫描图片
     /// </summary>
     [HttpPost("upload")]
-    [RequestSizeLimit(20 * 1024 * 1024)] // 20MB
+    [RequestSizeLimit(40 * 1024 * 1024)] // 40MB
     public async Task<ActionResult<UploadResponse>> Upload(
-        [FromForm] IFormFile file,
+        [FromForm] IFormFile originalImage,
+        [FromForm] IFormFile processedImage,
         [FromForm] int width = 0,
         [FromForm] int height = 0)
     {
         try
         {
-            if (file == null || file.Length == 0)
+            if (processedImage == null || processedImage.Length == 0)
             {
                 return BadRequest(new UploadResponse
                 {
                     Success = false,
-                    Message = "文件为空"
+                    Message = "处理后的图片为空"
+                });
+            }
+
+            if (originalImage == null || originalImage.Length == 0)
+            {
+                return BadRequest(new UploadResponse
+                {
+                    Success = false,
+                    Message = "原图为空"
                 });
             }
 
             // 验证文件类型
-            if (!file.ContentType.StartsWith("image/"))
+            if (!processedImage.ContentType.StartsWith("image/") || !originalImage.ContentType.StartsWith("image/"))
             {
                 return BadRequest(new UploadResponse
                 {
@@ -56,7 +66,13 @@ public class ScansController : ControllerBase
             }
 
             // 保存文件
-            var scanImage = await _fileStorage.SaveFileAsync(file, width, height);
+            _logger.LogInformation($"接收到上传请求 - Width: {width}, Height: {height}, OriginalSize: {originalImage.Length}, ProcessedSize: {processedImage.Length}");
+
+            // 保存处理后的图片到 scans 目录
+            var scanImage = await _fileStorage.SaveFileAsync(processedImage, width, height);
+
+            // 保存原图到 training 目录
+            await _fileStorage.SaveTrainingImageAsync(originalImage, scanImage.FileName);
 
             _logger.LogInformation($"文件已上传: {scanImage.FileName}, 大小: {scanImage.FileSize} bytes");
 
@@ -123,6 +139,33 @@ public class ScansController : ControllerBase
         {
             _logger.LogError(ex, $"下载文件时发生错误: {fileName}");
             return StatusCode(500);
+        }
+    }
+
+    /// <summary>
+    /// 删除扫描图片
+    /// </summary>
+    [HttpDelete("{fileName}")]
+    public async Task<IActionResult> Delete(string fileName)
+    {
+        try
+        {
+            var success = await _fileStorage.DeleteFileAsync(fileName);
+
+            if (success)
+            {
+                _logger.LogInformation($"文件已删除: {fileName}");
+                return Ok(new { success = true });
+            }
+            else
+            {
+                return NotFound(new { success = false });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"删除文件时发生错误: {fileName}");
+            return StatusCode(500, new { success = false });
         }
     }
 }

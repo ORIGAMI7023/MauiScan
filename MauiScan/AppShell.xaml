@@ -25,6 +25,12 @@
             Icon="settings.png"
             ContentTemplate="{DataTemplate views:MLTestPage}"
             Route="MLTestPage" />
+
+        <ShellContent
+            Title="两阶段测试"
+            Icon="settings.png"
+            ContentTemplate="{DataTemplate views:TwoStageDetectionTestPage}"
+            Route="TwoStageDetectionTestPage" />
     </TabBar>
 
 </Shell>

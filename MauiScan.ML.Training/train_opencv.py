@@ -1,9 +1,6 @@
 """
-数据增强版训练脚本
-- 随机亮度/对比度/饱和度
-- 随机模糊
-- 随机噪声
-- 保持角点坐标不变（不做几何变换）
+使用 OpenCV resize 的训练脚本
+解决 Android 与 Python PIL resize 算法不一致的问题
 """
 
 import sys
@@ -11,57 +8,141 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
-import torchvision.transforms as transforms
+import cv2
 from tqdm import tqdm
+import json
 
 sys.path.append(str(Path(__file__).parent / 'models'))
-sys.path.append(str(Path(__file__).parent / 'dataset'))
 from corner_detector import PPTCornerDetector, CornerDetectionLoss
-from prepare_data import AnnotationDataset
 
 
-class AugmentedPPTDataset(Dataset):
-    """数据增强 + 内存预加载"""
+class SubsetDataset(Dataset):
+    """子集数据集包装器（用于训练/验证划分）"""
+    def __init__(self, base_dataset, indices, augment=False):
+        self.base_dataset = base_dataset
+        self.indices = list(indices)
+        self.augment = augment
 
-    def __init__(self, annotation_dataset, input_size=512, clamp_eps=0.02, augment=True):
+    def __len__(self):
+        return len(self.indices)
+
+    def __getitem__(self, idx):
+        real_idx = self.indices[idx]
+        image, corners_norm = self.base_dataset.cached_data[real_idx]
+
+        # 复制避免修改原始数据
+        image = image.copy()
+
+        # 数据增强
+        if self.augment:
+            image = self._augment_image(image)
+
+        # OpenCV resize
+        image = cv2.resize(image, (512, 512), interpolation=cv2.INTER_LINEAR)
+
+        # 转换为 tensor
+        image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+        corners_tensor = torch.from_numpy(corners_norm.copy()).flatten().float()
+
+        return image_tensor, corners_tensor
+
+    def _augment_image(self, image):
+        pil_image = Image.fromarray(image)
+
+        if np.random.rand() < 0.5:
+            factor = np.random.uniform(0.7, 1.3)
+            pil_image = ImageEnhance.Brightness(pil_image).enhance(factor)
+
+        if np.random.rand() < 0.5:
+            factor = np.random.uniform(0.7, 1.3)
+            pil_image = ImageEnhance.Contrast(pil_image).enhance(factor)
+
+        if np.random.rand() < 0.5:
+            factor = np.random.uniform(0.7, 1.3)
+            pil_image = ImageEnhance.Color(pil_image).enhance(factor)
+
+        if np.random.rand() < 0.2:
+            radius = np.random.uniform(0.5, 2.0)
+            pil_image = pil_image.filter(ImageFilter.GaussianBlur(radius=radius))
+
+        return np.array(pil_image)
+
+
+class OpenCVResizeDataset(Dataset):
+    """使用 OpenCV resize 的数据集（与 Android 一致）"""
+
+    def __init__(self, data_root, input_size=512, clamp_eps=0.02, augment=True):
         self.input_size = input_size
         self.clamp_eps = clamp_eps
         self.augment = augment
 
-        print(f"  预加载 {len(annotation_dataset)} 张图片到内存...")
         self.cached_data = []
+        data_root = Path(data_root)
 
-        for idx in tqdm(range(len(annotation_dataset)), desc='  Loading'):
-            image_array, corners, (width, height) = annotation_dataset[idx]
-            image = Image.fromarray(image_array)
+        # 查找所有有标注的图片
+        print(f"  扫描数据目录: {data_root}")
+        image_files = []
 
-            # 归一化坐标
-            corners_norm = corners.copy()
-            corners_norm[:, 0] /= width
-            corners_norm[:, 1] /= height
-            corners_norm = np.clip(corners_norm, self.clamp_eps, 1.0 - self.clamp_eps)
+        # 支持多级目录
+        for pattern in ["**/*.jpg", "**/*.png", "**/*.jpeg"]:
+            for img_path in data_root.glob(pattern):
+                json_path = img_path.with_suffix('.json')
+                if json_path.exists():
+                    image_files.append((img_path, json_path))
 
-            # 缓存原始图片（PIL格式）+ 坐标
-            self.cached_data.append((image, corners_norm))
+        print(f"  找到 {len(image_files)} 个带标注的图片")
+        print(f"  预加载到内存...")
 
-        print(f"  完成！所有数据已加载到内存")
+        for img_path, json_path in tqdm(image_files, desc='  Loading'):
+            try:
+                # 加载图片（OpenCV BGR -> RGB）
+                image = cv2.imread(str(img_path))
+                if image is None:
+                    continue
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                height, width = image.shape[:2]
+
+                # 加载标注
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                corners = data['Corners']
+                corners_array = np.array([[c['X'], c['Y']] for c in corners], dtype=np.float32)
+
+                # 归一化坐标
+                corners_norm = corners_array.copy()
+                corners_norm[:, 0] /= width
+                corners_norm[:, 1] /= height
+                corners_norm = np.clip(corners_norm, self.clamp_eps, 1.0 - self.clamp_eps)
+
+                # 缓存原始图片（numpy RGB 格式）+ 坐标
+                self.cached_data.append((image, corners_norm))
+            except Exception as e:
+                print(f"  跳过 {img_path.name}: {e}")
+
+        print(f"  完成！加载了 {len(self.cached_data)} 个样本")
 
     def __len__(self):
         return len(self.cached_data)
 
     def __getitem__(self, idx):
-        image, corners_norm = self.cached_data[idx]
+        image_array, corners_norm = self.cached_data[idx]
+
+        # 复制避免修改原始数据
+        image = image_array.copy()
 
         # ⭐ 数据增强（仅对图片，角点坐标不变）
         if self.augment:
             image = self._augment_image(image)
 
-        # Resize + ToTensor
-        image = image.resize((self.input_size, self.input_size), Image.BILINEAR)
-        image_tensor = transforms.ToTensor()(image)
+        # ⭐ 使用 OpenCV resize（与 Android CreateScaledBitmap 一致）
+        image = cv2.resize(image, (self.input_size, self.input_size), interpolation=cv2.INTER_LINEAR)
+
+        # 转换为 tensor [C, H, W]，归一化到 [0, 1]
+        image_tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
 
         corners_tensor = torch.from_numpy(corners_norm).flatten().float()
 
@@ -70,37 +151,41 @@ class AugmentedPPTDataset(Dataset):
     def _augment_image(self, image):
         """
         图像增强（不改变几何结构）
+        输入输出都是 numpy RGB 数组
         """
+        # 转为 PIL 进行增强
+        pil_image = Image.fromarray(image)
+
         # 1. 随机亮度 (0.7 - 1.3)
         if np.random.rand() < 0.5:
             factor = np.random.uniform(0.7, 1.3)
-            enhancer = ImageEnhance.Brightness(image)
-            image = enhancer.enhance(factor)
+            enhancer = ImageEnhance.Brightness(pil_image)
+            pil_image = enhancer.enhance(factor)
 
         # 2. 随机对比度 (0.7 - 1.3)
         if np.random.rand() < 0.5:
             factor = np.random.uniform(0.7, 1.3)
-            enhancer = ImageEnhance.Contrast(image)
-            image = enhancer.enhance(factor)
+            enhancer = ImageEnhance.Contrast(pil_image)
+            pil_image = enhancer.enhance(factor)
 
         # 3. 随机饱和度 (0.7 - 1.3)
         if np.random.rand() < 0.5:
             factor = np.random.uniform(0.7, 1.3)
-            enhancer = ImageEnhance.Color(image)
-            image = enhancer.enhance(factor)
+            enhancer = ImageEnhance.Color(pil_image)
+            pil_image = enhancer.enhance(factor)
 
         # 4. 随机锐度 (0.5 - 1.5)
         if np.random.rand() < 0.3:
             factor = np.random.uniform(0.5, 1.5)
-            enhancer = ImageEnhance.Sharpness(image)
-            image = enhancer.enhance(factor)
+            enhancer = ImageEnhance.Sharpness(pil_image)
+            pil_image = enhancer.enhance(factor)
 
         # 5. 随机模糊
         if np.random.rand() < 0.2:
             radius = np.random.uniform(0.5, 2.0)
-            image = image.filter(ImageFilter.GaussianBlur(radius=radius))
+            pil_image = pil_image.filter(ImageFilter.GaussianBlur(radius=radius))
 
-        return image
+        return np.array(pil_image)
 
 
 def train_epoch(model, dataloader, criterion, optimizer, device, scaler=None):
@@ -185,7 +270,7 @@ def validate(model, dataloader, criterion, device):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description='数据增强训练')
+    parser = argparse.ArgumentParser(description='OpenCV Resize 训练（兼容 Android）')
     parser.add_argument('--data-root', type=str, default='../AnnotationTool/data',
                         help='数据根目录')
     parser.add_argument('--epochs', type=int, default=300,
@@ -196,7 +281,7 @@ def main():
                         help='初始学习率')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         help='设备')
-    parser.add_argument('--save-path', type=str, default='checkpoints/model_augmented.pth',
+    parser.add_argument('--save-path', type=str, default='checkpoints/model_opencv.pth',
                         help='模型保存路径')
     parser.add_argument('--resume', type=str, default=None,
                         help='从checkpoint继续训练')
@@ -204,37 +289,39 @@ def main():
     args = parser.parse_args()
 
     print("="*60)
-    print("  数据增强训练")
+    print("  OpenCV Resize 训练（兼容 Android）")
     print("="*60)
     print(f"设备: {args.device}")
     print(f"训练轮数: {args.epochs}")
     print(f"批次大小: {args.batch_size}")
     print(f"学习率: {args.lr}")
+    print(f"Resize 方法: cv2.INTER_LINEAR (与 Android 一致)")
     print("="*60)
 
     # 加载数据
     print("\n[1/5] 加载数据集...")
-    annotation_dataset = AnnotationDataset(args.data_root)
+    full_dataset = OpenCVResizeDataset(args.data_root, input_size=512, augment=False)
 
-    if len(annotation_dataset) == 0:
+    if len(full_dataset) == 0:
         print("[ERROR] 没有找到数据！")
         return
 
-    print(f"总样本数: {len(annotation_dataset)}")
+    print(f"总样本数: {len(full_dataset)}")
 
     # 划分训练集和验证集
-    train_dataset_raw, val_dataset_raw = annotation_dataset.split_train_val(val_ratio=0.15)
+    val_size = int(len(full_dataset) * 0.15)
+    train_size = len(full_dataset) - val_size
+    train_indices, val_indices = random_split(range(len(full_dataset)), [train_size, val_size])
 
-    # 创建 PyTorch Dataset（训练集增强，验证集不增强）
-    train_dataset = AugmentedPPTDataset(train_dataset_raw, input_size=512, augment=True)
-    val_dataset = AugmentedPPTDataset(val_dataset_raw, input_size=512, augment=False)
+    train_dataset = SubsetDataset(full_dataset, train_indices, augment=True)
+    val_dataset = SubsetDataset(full_dataset, val_indices, augment=False)
 
-    # 创建 DataLoader
-    # ⭐ 启用多进程加速数据增强
+    # 创建 DataLoader（Windows 上 num_workers=0 避免多进程问题）
+    num_workers = 0 if sys.platform == 'win32' else 4
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
-                              num_workers=8, pin_memory=True, persistent_workers=True)
+                              num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
-                            num_workers=4, pin_memory=True, persistent_workers=True)
+                            num_workers=num_workers, pin_memory=True)
 
     print(f"训练集: {len(train_dataset)} 样本（增强）")
     print(f"验证集: {len(val_dataset)} 样本（不增强）")

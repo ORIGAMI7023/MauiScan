@@ -9,3 +9,10 @@ public class ScanImageDto
     public DateTime ScannedAt { get; set; }
     public string DownloadUrl { get; set; } = string.Empty;
 }
+
+public class UploadResponse
+{
+    public bool Success { get; set; }
+    public string? Message { get; set; }
+    public ScanImageDto? ScanImage { get; set; }
+}

@@ -11,6 +11,16 @@
 #include <cstring>
 #include <cmath>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define LOG_TAG "OpenCVScanner"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGD(...)
+#define LOGE(...)
+#endif
+
 using namespace cv;
 
 // 版本信息
@@ -137,9 +147,28 @@ static bool detect_document_bounds_internal(
         Mat enhanced;
         blurred.convertTo(enhanced, -1, 1.15, 0); // alpha=1.15 (对比度), beta=0 (亮度)
 
-        // 4. Canny 边缘检测
+        // 4. 多尺度Canny边缘检测（5个尺度融合）
         Mat edges;
-        Canny(enhanced, edges, params->canny_threshold1, params->canny_threshold2);
+        std::vector<Mat> edges_list;
+
+        // 5个尺度：kernel 3x3, 5x5, 7x7, 9x9, 11x11
+        for (int i = 0; i < 5; i++) {
+            int scale_kernel_size = 3 + i * 2; // 3, 5, 7, 9, 11
+
+            Mat scale_blurred;
+            GaussianBlur(enhanced, scale_blurred, Size(scale_kernel_size, scale_kernel_size), 0);
+
+            Mat scale_edges;
+            Canny(scale_blurred, scale_edges, params->canny_threshold1, params->canny_threshold2);
+
+            edges_list.push_back(scale_edges);
+        }
+
+        // 融合所有尺度的边缘（取最大值）
+        edges = edges_list[0].clone();
+        for (size_t i = 1; i < edges_list.size(); i++) {
+            max(edges, edges_list[i], edges);
+        }
 
         // 5. 查找轮廓
         std::vector<std::vector<Point>> contours;
@@ -149,9 +178,9 @@ static bool detect_document_bounds_internal(
             return false;
         }
 
-        // 6. 使用低阈值筛选候选轮廓（3%，避免遗漏）
+        // 6. 使用参数配置的最小面积阈值筛选候选轮廓
         double image_area = image.cols * image.rows;
-        double min_area = image_area * 0.03; // 降低到 3%
+        double min_area = image_area * params->min_contour_area_ratio;
 
         std::vector<ContourCandidate> candidates;
 
@@ -470,203 +499,315 @@ const char* scanner_get_version(void) {
     return SCANNER_VERSION;
 }
 
-// ========== Corner Refinement Implementation ==========
-
-// 辅助函数：精修单个角点
-static bool refine_single_corner(
-    const Mat& gray_image,
+// 角点精修实现（复刻 Windows OpenCvSharp 逻辑）
+int32_t scanner_refine_corner(
+    const uint8_t* input_data,
+    int32_t input_size,
     float ml_x,
     float ml_y,
-    float& refined_x,
-    float& refined_y
+    float* refined_x,
+    float* refined_y
 ) {
-    const int patch_size = 64; // 搜索窗口大小
-    const int half_patch = patch_size / 2;
+    LOGD("[RefineCorner] Called with input_size=%d, ml=(%f, %f)", input_size, ml_x, ml_y);
+
+    if (!input_data || input_size <= 0 || !refined_x || !refined_y) {
+        LOGE("[RefineCorner] Invalid parameters");
+        return 0;
+    }
 
     try {
-        // 1. 裁剪 patch（确保不越界）
-        int center_x = static_cast<int>(ml_x);
-        int center_y = static_cast<int>(ml_y);
+        // 1. 解码图像为灰度图
+        std::vector<uint8_t> buffer(input_data, input_data + input_size);
+        Mat gray = imdecode(buffer, IMREAD_GRAYSCALE);
 
-        int x1 = std::max(0, center_x - half_patch);
-        int y1 = std::max(0, center_y - half_patch);
-        int x2 = std::min(gray_image.cols, center_x + half_patch);
-        int y2 = std::min(gray_image.rows, center_y + half_patch);
+        if (gray.empty()) {
+            LOGE("[RefineCorner] Failed to decode image");
+            return 0;
+        }
+
+        LOGD("[RefineCorner] Image decoded: %dx%d", gray.cols, gray.rows);
+
+        // 根据图像尺寸动态调整 patch 大小
+        int imageMinDim = std::min(gray.cols, gray.rows);
+        int PATCH_SIZE = std::min(256, imageMinDim / 12);  // 对于4080x3060，约为255
+        PATCH_SIZE = std::max(64, PATCH_SIZE);  // 最小64
+
+        int centerX = static_cast<int>(ml_x);
+        int centerY = static_cast<int>(ml_y);
+        int halfPatch = PATCH_SIZE / 2;
+
+        LOGD("[RefineCorner] Patch size: %d (image: %dx%d)", PATCH_SIZE, gray.cols, gray.rows);
+
+        // 2. 裁剪 patch（防止越界）
+        int x1 = std::max(0, centerX - halfPatch);
+        int y1 = std::max(0, centerY - halfPatch);
+        int x2 = std::min(gray.cols, centerX + halfPatch);
+        int y2 = std::min(gray.rows, centerY + halfPatch);
+
+        LOGD("[RefineCorner] Patch ROI: (%d,%d) to (%d,%d)", x1, y1, x2, y2);
 
         if (x2 - x1 < 20 || y2 - y1 < 20) {
-            return false; // Patch 太小
+            LOGE("[RefineCorner] Patch too small: %dx%d", x2-x1, y2-y1);
+            return 0; // Patch 太小
         }
 
-        Mat patch = gray_image(Rect(x1, y1, x2 - x1, y2 - y1));
+        Mat patch = gray(Rect(x1, y1, x2 - x1, y2 - y1));
 
-        // 2. Canny 边缘检测
+        // 3. Canny 边缘检测（降低阈值，更容易检测边缘）
         Mat edges;
-        Canny(patch, edges, 50, 150, 3);
+        Canny(patch, edges, 30, 100, 3);
 
-        // 3. 霍夫直线检测
+        // 4. Hough 直线检测（放宽参数）
         std::vector<Vec4i> lines;
-        HoughLinesP(edges, lines, 1, CV_PI / 180, 30, 20, 5);
+        int minLineLength = std::max(10, PATCH_SIZE / 8);  // 至少 patch 的 1/8
+        HoughLinesP(edges, lines, 1, CV_PI / 180, 15, minLineLength, 10);
+
+        LOGD("[RefineCorner] Hough lines detected: %zu", lines.size());
 
         if (lines.size() < 2) {
-            return false; // 检测到的直线太少
+            LOGE("[RefineCorner] Too few lines: %zu", lines.size());
+            return 0; // 直线太少
         }
 
-        // 4. 直线聚类（水平 vs 垂直）
-        std::vector<Vec4i> horizontal_lines;
-        std::vector<Vec4i> vertical_lines;
-
+        // 5. 直线聚类（水平 vs 垂直）
+        std::vector<Vec4i> horizontalLines, verticalLines;
         for (const auto& line : lines) {
-            int dx = std::abs(line[2] - line[0]);
-            int dy = std::abs(line[3] - line[1]);
+            float dx = std::abs(static_cast<float>(line[2] - line[0]));
+            float dy = std::abs(static_cast<float>(line[3] - line[1]));
 
             if (dx > dy) {
-                horizontal_lines.push_back(line);
+                horizontalLines.push_back(line);
             } else {
-                vertical_lines.push_back(line);
+                verticalLines.push_back(line);
             }
         }
 
-        if (horizontal_lines.empty() || vertical_lines.empty()) {
-            return false; // 没有找到两组直线
+        LOGD("[RefineCorner] Line groups: H=%zu V=%zu", horizontalLines.size(), verticalLines.size());
+
+        if (horizontalLines.empty() || verticalLines.empty()) {
+            LOGE("[RefineCorner] Missing line groups: H=%zu V=%zu", horizontalLines.size(), verticalLines.size());
+            return 0;  // 失败：缺少必要的直线
         }
 
-        // 5. 拟合直线（最小二乘法）
-        auto fit_line = [](const std::vector<Vec4i>& lines) -> std::pair<float, float> {
+        // 6. 拟合直线（最小二乘法）
+        auto fitLine = [](const std::vector<Vec4i>& lines) -> std::pair<float, float> {
             std::vector<Point2f> points;
             for (const auto& line : lines) {
                 points.push_back(Point2f(line[0], line[1]));
                 points.push_back(Point2f(line[2], line[3]));
             }
 
-            float avg_x = 0, avg_y = 0;
+            float avgX = 0, avgY = 0;
             for (const auto& p : points) {
-                avg_x += p.x;
-                avg_y += p.y;
+                avgX += p.x;
+                avgY += p.y;
             }
-            avg_x /= points.size();
-            avg_y /= points.size();
+            avgX /= points.size();
+            avgY /= points.size();
 
             float numerator = 0, denominator = 0;
             for (const auto& p : points) {
-                numerator += (p.x - avg_x) * (p.y - avg_y);
-                denominator += (p.x - avg_x) * (p.x - avg_x);
+                numerator += (p.x - avgX) * (p.y - avgY);
+                denominator += (p.x - avgX) * (p.x - avgX);
             }
 
             if (std::abs(denominator) < 1e-6) {
-                return {0, 0}; // 失败
+                return {0, 0}; // 无效
             }
 
             float k = numerator / denominator;
-            float b = avg_y - k * avg_x;
+            float b = avgY - k * avgX;
             return {k, b};
         };
 
-        auto h_line = fit_line(horizontal_lines);
-        auto v_line = fit_line(vertical_lines);
+        auto [k1, b1] = fitLine(horizontalLines);
+        auto [k2, b2] = fitLine(verticalLines);
 
-        if (std::abs(h_line.first) < 1e-6 || std::abs(v_line.first) < 1e-6) {
-            return false;
-        }
-
-        // 6. 计算交点
-        // h_line: y = k1*x + b1
-        // v_line: y = k2*x + b2
-        float k1 = h_line.first, b1 = h_line.second;
-        float k2 = v_line.first, b2 = v_line.second;
-
+        // 7. 计算交点
         if (std::abs(k1 - k2) < 1e-6) {
-            return false; // 平行线
+            LOGE("[RefineCorner] Lines are parallel: k1=%f k2=%f", k1, k2);
+            return 0; // 平行线
         }
 
         float x = (b2 - b1) / (k1 - k2);
         float y = k1 * x + b1;
 
-        // 7. 转换回原图坐标
-        refined_x = x1 + x;
-        refined_y = y1 + y;
+        LOGD("[RefineCorner] Intersection in patch: (%f, %f)", x, y);
 
-        // 8. 验证精修结果（距离 ML 预测不能太远）
+        // 8. 转换回原图坐标
+        *refined_x = x1 + x;
+        *refined_y = y1 + y;
+
+        // 9. 验证合理性
         float distance = std::sqrt(
-            (refined_x - ml_x) * (refined_x - ml_x) +
-            (refined_y - ml_y) * (refined_y - ml_y)
+            std::pow(*refined_x - ml_x, 2) +
+            std::pow(*refined_y - ml_y, 2)
         );
 
-        if (distance > patch_size) {
-            return false; // 超出搜索范围
+        LOGD("[RefineCorner] Refined: (%f, %f), distance from ML: %f", *refined_x, *refined_y, distance);
+
+        // 安全检查：精修结果不能偏移太远（PATCH_SIZE 的 2/3）
+        float maxAllowedDistance = PATCH_SIZE * 0.67f;
+        if (distance > maxAllowedDistance) {
+            LOGE("[RefineCorner] Distance too large: %f > %f (max allowed)", distance, maxAllowedDistance);
+            return 0; // 超出合理范围
         }
 
-        return true;
-    } catch (const cv::Exception&) {
-        return false;
+        // 根据直线数量评估置信度
+        // 0 = 失败
+        // 1 = 低置信度（各1条线）
+        // 2 = 高置信度（各2条线以上）
+        int confidence = 0;
+        if (horizontalLines.size() >= 2 && verticalLines.size() >= 2) {
+            confidence = 2;  // 高置信度：证据充分
+            LOGD("[RefineCorner] Success with HIGH confidence (H=%zu, V=%zu)", horizontalLines.size(), verticalLines.size());
+        } else if (horizontalLines.size() >= 1 && verticalLines.size() >= 1) {
+            confidence = 1;  // 低置信度：证据勉强
+            LOGD("[RefineCorner] Success with LOW confidence (H=%zu, V=%zu)", horizontalLines.size(), verticalLines.size());
+        }
+
+        return confidence;
+    }
+    catch (const std::exception& e) {
+        LOGE("[RefineCorner] Exception: %s", e.what());
+        return 0;
     }
 }
 
-int32_t scanner_refine_corners(
+// 基于亮度阈值检测PPT边界（用于第二阶段检测）
+int32_t scanner_detect_bounds_by_brightness(
     const uint8_t* input_data,
     int32_t input_size,
-    const QuadPointsF* ml_quad,
-    QuadPointsF* refined_quad
+    int32_t brightness_threshold,
+    double min_area_ratio,
+    QuadPoints* quad
 ) {
-    if (!input_data || input_size <= 0 || !ml_quad || !refined_quad) {
+    LOGD("[BrightnessDetect] Starting detection with threshold=%d, minArea=%.2f", brightness_threshold, min_area_ratio);
+
+    if (!input_data || input_size <= 0 || !quad) {
+        LOGE("[BrightnessDetect] Invalid parameters");
         return 0;
     }
 
     try {
-        // 解码图像为灰度图
+        // 1. 解码图像
         std::vector<uint8_t> buffer(input_data, input_data + input_size);
-        Mat image = imdecode(buffer, IMREAD_GRAYSCALE);
+        Mat image = imdecode(buffer, IMREAD_COLOR);
 
         if (image.empty()) {
-            // 解码失败，直接返回原始坐标
-            *refined_quad = *ml_quad;
+            LOGE("[BrightnessDetect] Failed to decode image");
             return 0;
         }
 
-        // 初始化为 ML 预测的坐标
-        *refined_quad = *ml_quad;
+        LOGD("[BrightnessDetect] Image decoded: %dx%d", image.cols, image.rows);
 
-        int success_count = 0;
+        // 2. 转换为灰度图
+        Mat gray;
+        cvtColor(image, gray, COLOR_BGR2GRAY);
 
-        // 精修左上角
-        float tl_x, tl_y;
-        if (refine_single_corner(image, ml_quad->top_left_x, ml_quad->top_left_y, tl_x, tl_y)) {
-            refined_quad->top_left_x = tl_x;
-            refined_quad->top_left_y = tl_y;
-            success_count++;
+        // 3. 计算平均亮度
+        Scalar meanBrightness = mean(gray);
+        double avgBrightness = meanBrightness[0];
+        LOGD("[BrightnessDetect] Average brightness: %.1f", avgBrightness);
+
+        // 4. 二值化：亮度 > (平均 + 阈值) 的区域为白色（PPT区域）
+        Mat binary;
+        double thresholdValue = avgBrightness + brightness_threshold;
+        threshold(gray, binary, thresholdValue, 255, THRESH_BINARY);
+
+        LOGD("[BrightnessDetect] Binary threshold: %.1f", thresholdValue);
+
+        // 5. 形态学处理：闭运算（填充孔洞）+ 开运算（去噪）
+        int morphSize = std::max(3, std::min(image.cols, image.rows) / 100);  // 根据图像大小动态调整
+        Mat kernel = getStructuringElement(MORPH_RECT, Size(morphSize, morphSize));
+
+        Mat closed, opened;
+        morphologyEx(binary, closed, MORPH_CLOSE, kernel);  // 闭运算：填充内部孔洞
+        morphologyEx(closed, opened, MORPH_OPEN, kernel);   // 开运算：去除小噪声
+
+        LOGD("[BrightnessDetect] Morphology kernel size: %d", morphSize);
+
+        // 6. 查找轮廓
+        std::vector<std::vector<Point>> contours;
+        findContours(opened, contours, RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
+
+        LOGD("[BrightnessDetect] Found %zu contours", contours.size());
+
+        if (contours.empty()) {
+            LOGE("[BrightnessDetect] No contours found");
+            return 0;
         }
 
-        // 精修右上角
-        float tr_x, tr_y;
-        if (refine_single_corner(image, ml_quad->top_right_x, ml_quad->top_right_y, tr_x, tr_y)) {
-            refined_quad->top_right_x = tr_x;
-            refined_quad->top_right_y = tr_y;
-            success_count++;
+        // 7. 找到最大面积的轮廓
+        double maxArea = 0;
+        int maxIdx = -1;
+        double imageArea = image.cols * image.rows;
+
+        for (size_t i = 0; i < contours.size(); i++) {
+            double area = contourArea(contours[i]);
+            if (area > maxArea) {
+                maxArea = area;
+                maxIdx = i;
+            }
         }
 
-        // 精修右下角
-        float br_x, br_y;
-        if (refine_single_corner(image, ml_quad->bottom_right_x, ml_quad->bottom_right_y, br_x, br_y)) {
-            refined_quad->bottom_right_x = br_x;
-            refined_quad->bottom_right_y = br_y;
-            success_count++;
+        LOGD("[BrightnessDetect] Max contour area: %.0f (%.1f%% of image)", maxArea, (maxArea / imageArea) * 100);
+
+        // 8. 验证面积占比
+        double areaRatio = maxArea / imageArea;
+        if (areaRatio < min_area_ratio) {
+            LOGE("[BrightnessDetect] Area ratio %.1f%% < min %.1f%%", areaRatio * 100, min_area_ratio * 100);
+            return 0;
         }
 
-        // 精修左下角
-        float bl_x, bl_y;
-        if (refine_single_corner(image, ml_quad->bottom_left_x, ml_quad->bottom_left_y, bl_x, bl_y)) {
-            refined_quad->bottom_left_x = bl_x;
-            refined_quad->bottom_left_y = bl_y;
-            success_count++;
+        // 9. 拟合四边形
+        const auto& bestContour = contours[maxIdx];
+        double peri = arcLength(bestContour, true);
+        std::vector<Point> approx;
+
+        // 尝试不同的epsilon值来拟合四边形
+        for (double epsilon = 0.01; epsilon <= 0.10; epsilon += 0.01) {
+            approxPolyDP(bestContour, approx, epsilon * peri, true);
+
+            if (approx.size() == 4) {
+                LOGD("[BrightnessDetect] Quad approximated with epsilon=%.2f", epsilon);
+                break;
+            }
         }
 
-        // 如果至少成功精修 2 个角点，认为精修成功
-        return (success_count >= 2) ? 1 : 0;
-    } catch (const cv::Exception&) {
-        // 精修失败，返回原始坐标
-        *refined_quad = *ml_quad;
-        return 0;
-    } catch (...) {
-        *refined_quad = *ml_quad;
+        // 10. 如果无法拟合为四边形，使用最小外接旋转矩形
+        if (approx.size() != 4) {
+            LOGD("[BrightnessDetect] Cannot approximate to quad, using minAreaRect");
+
+            RotatedRect rotatedRect = minAreaRect(bestContour);
+            Point2f vertices[4];
+            rotatedRect.points(vertices);
+
+            // 转换为整数点
+            approx.clear();
+            for (int i = 0; i < 4; i++) {
+                approx.push_back(Point(static_cast<int>(vertices[i].x), static_cast<int>(vertices[i].y)));
+            }
+        }
+
+        if (approx.size() != 4) {
+            LOGE("[BrightnessDetect] Failed to get 4 corners (got %zu)", approx.size());
+            return 0;
+        }
+
+        // 11. 排序角点并填充结果
+        sort_quad_points(approx, quad);
+
+        LOGD("[BrightnessDetect] Success! Quad: TL(%d,%d) TR(%d,%d) BR(%d,%d) BL(%d,%d)",
+            quad->top_left_x, quad->top_left_y,
+            quad->top_right_x, quad->top_right_y,
+            quad->bottom_right_x, quad->bottom_right_y,
+            quad->bottom_left_x, quad->bottom_left_y);
+
+        return 1;
+    }
+    catch (const std::exception& e) {
+        LOGE("[BrightnessDetect] Exception: %s", e.what());
         return 0;
     }
 }
