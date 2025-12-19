@@ -8,22 +8,32 @@ public interface IFileStorageService
     Task<ScanImageDto> SaveFileAsync(IFormFile file, int width, int height);
     Task<(byte[] fileData, string contentType)?> GetFileAsync(string fileName);
     Task<List<ScanImageDto>> GetRecentScansAsync(int limit = 10);
+    Task<bool> DeleteFileAsync(string fileName);
+    Task SaveTrainingImageAsync(IFormFile file, string referenceName);
 }
 
 public class FileStorageService : IFileStorageService
 {
     private readonly string _storageDirectory;
+    private readonly string _trainingDirectory;
     private readonly long _maxFileSizeBytes;
 
     public FileStorageService(IConfiguration configuration)
     {
         _storageDirectory = configuration["Storage:ScansDirectory"] ?? "data/scans";
+        _trainingDirectory = configuration["Storage:TrainingDataDirectory"] ?? "data/training";
         _maxFileSizeBytes = (configuration.GetValue<int?>("Storage:MaxFileSizeMB") ?? 20) * 1024 * 1024;
 
         // 确保存储目录存在
         if (!Directory.Exists(_storageDirectory))
         {
             Directory.CreateDirectory(_storageDirectory);
+        }
+
+        // 确保训练目录存在
+        if (!Directory.Exists(_trainingDirectory))
+        {
+            Directory.CreateDirectory(_trainingDirectory);
         }
     }
 
@@ -110,20 +120,13 @@ public class FileStorageService : IFileStorageService
                 metadata = await ReconstructMetadataFromImageAsync(file.FullName);
             }
 
-            // 确保时间是北京时间（如果是旧数据可能是UTC时间）
-            if (metadata != null)
-            {
-                // 转换为北京时间 (UTC+8)
-                metadata.ScannedAt = metadata.ScannedAt.AddHours(8);
-            }
-
             result.Add(metadata ?? new ScanImageDto
             {
                 FileName = file.Name,
                 FileSize = file.Length,
-                Width = -1,  // 使用 -1 表示未知尺寸（而非0）
+                Width = -1,
                 Height = -1,
-                ScannedAt = file.LastWriteTimeUtc.AddHours(8),  // 转换为北京时间
+                ScannedAt = file.LastWriteTimeUtc.AddHours(8),
                 DownloadUrl = $"/api/scans/{file.Name}"
             });
         }
@@ -200,5 +203,75 @@ public class FileStorageService : IFileStorageService
             Console.WriteLine($"Failed to reconstruct metadata for {imagePath}: {ex.Message}");
             return null;
         }
+    }
+
+    public async Task<bool> DeleteFileAsync(string fileName)
+    {
+        // 防止路径穿越攻击
+        if (fileName.Contains("..") || fileName.Contains("/") || fileName.Contains("\\"))
+        {
+            return false;
+        }
+
+        var filePath = Path.Combine(_storageDirectory, fileName);
+        var metadataPath = Path.Combine(_storageDirectory, $"{fileName}.json");
+
+        bool deleted = false;
+
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+            deleted = true;
+        }
+
+        if (File.Exists(metadataPath))
+        {
+            File.Delete(metadataPath);
+        }
+
+        // 删除对应的训练图片
+        var trainingFileName = Path.GetFileNameWithoutExtension(fileName) + "_original.jpg";
+        var trainingFilePath = Path.Combine(_trainingDirectory, trainingFileName);
+        var trainingMetadataPath = Path.Combine(_trainingDirectory, $"{trainingFileName}.json");
+
+        if (File.Exists(trainingFilePath))
+        {
+            File.Delete(trainingFilePath);
+        }
+
+        if (File.Exists(trainingMetadataPath))
+        {
+            File.Delete(trainingMetadataPath);
+        }
+
+        return deleted;
+    }
+
+    public async Task SaveTrainingImageAsync(IFormFile file, string referenceName)
+    {
+        var fileName = Path.GetFileNameWithoutExtension(referenceName) + "_original.jpg";
+        var filePath = Path.Combine(_trainingDirectory, fileName);
+
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        // 保存元数据
+        var metadata = new
+        {
+            originalFileName = file.FileName,
+            savedFileName = fileName,
+            processedImageReference = referenceName,
+            uploadedAt = DateTime.UtcNow.AddHours(8),
+            fileSize = new FileInfo(filePath).Length
+        };
+
+        var metadataPath = Path.Combine(_trainingDirectory, $"{fileName}.json");
+        var json = System.Text.Json.JsonSerializer.Serialize(metadata, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+        await File.WriteAllTextAsync(metadataPath, json);
     }
 }
