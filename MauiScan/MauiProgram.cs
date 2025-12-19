@@ -51,10 +51,20 @@ namespace MauiScan
 
             // 注册平台特定服务
 #if ANDROID
+            System.Diagnostics.Debug.WriteLine("[MauiProgram] Registering ANDROID services");
             builder.Services.AddSingleton<ICameraService, Platforms.Android.Services.CameraService>();
             builder.Services.AddSingleton<IClipboardService, Platforms.Android.Services.ClipboardService>();
             builder.Services.AddSingleton<IDragDropService, Platforms.Android.Services.DragDropService>();
             builder.Services.AddSingleton<IManualAnnotationService, Platforms.Android.Services.ManualAnnotationService>();
+#else
+            // iOS/MacCatalyst/其他平台
+            System.Diagnostics.Debug.WriteLine("[MauiProgram] Registering iOS/OTHER services");
+            builder.Services.AddSingleton<ICameraService, Platforms.iOS.Services.CameraService>();
+            builder.Services.AddSingleton<IClipboardService, Platforms.iOS.Services.ClipboardService>();
+            System.Diagnostics.Debug.WriteLine("[MauiProgram] iOS services registered!");
+            // TODO: iOS 平台其他服务待实现
+            // builder.Services.AddSingleton<IDragDropService, Platforms.iOS.Services.DragDropService>();
+            // builder.Services.AddSingleton<IManualAnnotationService, Platforms.iOS.Services.ManualAnnotationService>();
 #endif
 
             // 注册页面

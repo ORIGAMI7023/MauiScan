@@ -1,6 +1,10 @@
 using MauiScan.ML.Services;
 using MauiScan.ML.Models;
 using System.Diagnostics;
+#if !ANDROID && !IOS && !MACCATALYST
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
+#endif
 
 namespace MauiScan.Views;
 
@@ -32,18 +36,29 @@ public partial class MLTestPage : ContentPage
         ModelStatusLabel.Text = "正在检查模型文件...";
         try
         {
+            Debug.WriteLine($"[ML Test] OnAppearing started");
+            Debug.WriteLine($"[ML Test] AppDataDirectory: {FileSystem.AppDataDirectory}");
+
             await App.EnsureModelFileCopiedAsync();
+            Debug.WriteLine($"[ML Test] Model file copy completed");
+
             await CheckModelStatusAsync();
+            Debug.WriteLine($"[ML Test] Model status check completed");
 
             HasError = false;
             OnPropertyChanged(nameof(HasError));
         }
         catch (Exception ex)
         {
-            _lastErrorMessage = $"模型文件复制失败\n\n错误类型: {ex.GetType().Name}\n错误消息: {ex.Message}\n\n完整堆栈:\n{ex.StackTrace}";
-            ModelStatusLabel.Text = $"❌ 模型文件复制失败: {ex.Message}";
+            var innerMsg = ex.InnerException != null ? $"\n\n内部异常: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}" : "";
+            _lastErrorMessage = $"初始化失败\n\n错误类型: {ex.GetType().Name}\n错误消息: {ex.Message}{innerMsg}\n\n完整堆栈:\n{ex.StackTrace}";
+            ModelStatusLabel.Text = $"❌ 初始化失败: {ex.GetType().Name}\n{ex.Message}";
             ModelStatusLabel.TextColor = Colors.Red;
-            Debug.WriteLine($"[ML Test] Error ensuring model file: {ex}");
+            Debug.WriteLine($"[ML Test] Error during initialization: {ex}");
+            if (ex.InnerException != null)
+            {
+                Debug.WriteLine($"[ML Test] Inner exception: {ex.InnerException}");
+            }
 
             HasError = true;
             OnPropertyChanged(nameof(HasError));
@@ -181,10 +196,50 @@ public partial class MLTestPage : ContentPage
 
                 Debug.WriteLine($"[ML Test] Final image size: {outputStream.Length / 1024.0:F1} KB");
                 return outputStream.ToArray();
-#else
-                // 非 Android 平台，直接使用原始数据
+#elif IOS || MACCATALYST
+                // iOS/MacCatalyst 平台：使用 UIKit 处理图片
                 originalStream.Position = 0;
-                return originalStream.ToArray();
+                using var uiImage = UIKit.UIImage.LoadFromData(Foundation.NSData.FromArray(originalStream.ToArray()));
+                if (uiImage == null)
+                    throw new Exception("无法解码图片");
+
+                _originalWidth = (int)uiImage.Size.Width;
+                _originalHeight = (int)uiImage.Size.Height;
+                Debug.WriteLine($"[ML Test] Original dimensions: {_originalWidth}x{_originalHeight}");
+
+                // 缩放到 512x512
+                Debug.WriteLine($"[ML Test] Resizing to: {targetSize}x{targetSize}");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                UIKit.UIGraphics.BeginImageContextWithOptions(new CoreGraphics.CGSize(targetSize, targetSize), false, 1.0f);
+                uiImage.Draw(new CoreGraphics.CGRect(0, 0, targetSize, targetSize));
+                var scaledImage = UIKit.UIGraphics.GetImageFromCurrentImageContext();
+                UIKit.UIGraphics.EndImageContext();
+
+                Debug.WriteLine($"[ML Test] iOS resize took: {sw.ElapsedMilliseconds}ms");
+
+                // 转换为 JPEG
+                using var jpegData = scaledImage?.AsJPEG(0.95f);
+                if (jpegData == null)
+                    throw new Exception("无法压缩图片");
+
+                var bytes = new byte[jpegData.Length];
+                System.Runtime.InteropServices.Marshal.Copy(jpegData.Bytes, bytes, 0, (int)jpegData.Length);
+
+                Debug.WriteLine($"[ML Test] Final image size: {bytes.Length / 1024.0:F1} KB");
+                return bytes;
+#else
+                // 其他平台，使用 ImageSharp
+                originalStream.Position = 0;
+                using var image = Image.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(originalStream);
+                _originalWidth = image.Width;
+                _originalHeight = image.Height;
+                Debug.WriteLine($"[ML Test] Original dimensions: {_originalWidth}x{_originalHeight}");
+
+                image.Mutate(x => x.Resize(targetSize, targetSize));
+                using var outputStream = new MemoryStream();
+                image.SaveAsJpeg(outputStream);
+                return outputStream.ToArray();
 #endif
             });
         }
