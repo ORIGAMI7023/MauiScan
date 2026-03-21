@@ -1,0 +1,11 @@
+{
+  "ServerUrl": "https://mauiscan.origami7023.net.cn",
+  "ApiKey": "your-secret-api-key-change-me",
+  "ConnectionTimeoutSeconds": 120,
+  "_comment": {
+    "ServerUrl": "服务器 URL（客户端使用）",
+    "ApiKey": "API 密钥（客户端发送请求时使用）",
+    "ConnectionTimeoutSeconds": "连接超时时间（秒，客户端使用）",
+    "_note": "复制此文件为 sync_config.json 并填入你的 API Key。该文件已添加到 .gitignore，不会提交到 Git。"
+  }
+}

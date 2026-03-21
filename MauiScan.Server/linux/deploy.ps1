@@ -6,7 +6,7 @@
 $ErrorActionPreference = "Stop"
 
 # 服务器配置
-$SERVER = "root@origami7023.net.cn"
+$SERVER = "origami@downf.cn"
 $PROJECT_ROOT = "D:\Programing\C#\MauiScan"
 
 function Write-Step {
@@ -34,17 +34,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Server build failed" }
     Write-Success "Server build completed"
 
-    # Step 2: Upload nginx config
-    Write-Step "Step 2/6: Uploading nginx config"
-    scp MauiScan.Server/linux/mauiscan.origami7023.net.cn.conf ${SERVER}:/etc/nginx/conf.d/mauiscan.origami7023.net.cn.conf
+    # Step 2: Upload nginx config to temp and install
+    Write-Step "Step 2/6: Installing nginx config"
+    scp MauiScan.Server/linux/mauiscan.origami7023.net.cn.conf ${SERVER}:/tmp/mauiscan.origami7023.net.cn.conf
     if ($LASTEXITCODE -ne 0) { throw "nginx config upload failed" }
-    Write-Success "nginx config uploaded"
+    ssh $SERVER "sudo mv /tmp/mauiscan.origami7023.net.cn.conf /etc/nginx/conf.d/mauiscan.origami7023.net.cn.conf"
+    if ($LASTEXITCODE -ne 0) { throw "nginx config install failed" }
+    Write-Success "nginx config installed"
 
-    # Step 3: Upload systemd service config
-    Write-Step "Step 3/6: Uploading systemd service config"
-    scp MauiScan.Server/linux/mauiscan-server.service ${SERVER}:/etc/systemd/system/mauiscan-server.service
+    # Step 3: Upload systemd service config to temp and install
+    Write-Step "Step 3/6: Installing systemd service config"
+    scp MauiScan.Server/linux/mauiscan-server.service ${SERVER}:/tmp/mauiscan-server.service
     if ($LASTEXITCODE -ne 0) { throw "mauiscan-server.service upload failed" }
-    Write-Success "mauiscan-server.service uploaded"
+    ssh $SERVER "sudo mv /tmp/mauiscan-server.service /etc/systemd/system/mauiscan-server.service"
+    if ($LASTEXITCODE -ne 0) { throw "mauiscan-server.service install failed" }
+    Write-Success "mauiscan-server.service installed"
 
     # Step 4: Upload Server
     Write-Step "Step 4/6: Uploading Server"
@@ -53,19 +57,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Server upload failed" }
     Write-Success "Server upload completed"
 
-    # Step 5: Test and reload nginx
-    Write-Step "Step 5/6: Testing and reloading nginx"
-    $nginxCommand = 'sudo nginx -t && sudo systemctl reload nginx'
-    ssh $SERVER $nginxCommand
-    if ($LASTEXITCODE -ne 0) { throw "nginx reload failed" }
-    Write-Success "nginx reloaded"
+    # Step 5: Set directory ownership
+    Write-Step "Step 5/6: Setting directory ownership"
+    ssh $SERVER "sudo chown -R origami:origami /var/www/mauiscan-server"
+    if ($LASTEXITCODE -ne 0) { throw "Directory ownership setup failed" }
+    Write-Success "Directory ownership set to origami:origami"
 
-    # Step 6: Reload systemd and restart service
-    Write-Step "Step 6/6: Restarting service"
-    $restartCommand = "sudo systemctl daemon-reload && sudo systemctl enable mauiscan-server && sudo systemctl restart mauiscan-server && sleep 2 && sudo systemctl status mauiscan-server"
-    ssh $SERVER $restartCommand
-    if ($LASTEXITCODE -ne 0) { throw "Service restart failed" }
-    Write-Success "Service restarted"
+    # Step 6: Test and reload nginx
+    Write-Step "Step 6/6: Testing and reloading nginx and restarting service"
+    $reloadCommand = 'sudo nginx -t && sudo systemctl reload nginx && sudo systemctl daemon-reload && sudo systemctl enable mauiscan-server && sudo systemctl restart mauiscan-server && sleep 2 && sudo systemctl status mauiscan-server'
+    ssh $SERVER $reloadCommand
+    if ($LASTEXITCODE -ne 0) { throw "Service reload failed" }
+    Write-Success "Nginx and service reloaded"
 
     # Done
     Write-Step "Full Deployment Completed!"

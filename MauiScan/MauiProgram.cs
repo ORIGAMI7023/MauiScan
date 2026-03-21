@@ -36,6 +36,9 @@ namespace MauiScan
             // 注册两阶段检测服务
             builder.Services.AddSingleton<TwoStageDetectionService>();
 
+            // 注册配置服务
+            builder.Services.AddSingleton<IConfigService, ConfigService>();
+
             // 注册 ML 推理服务
             builder.Services.AddSingleton<IMLInferenceService>(sp =>
             {

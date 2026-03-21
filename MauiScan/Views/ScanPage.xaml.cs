@@ -11,6 +11,7 @@ public partial class ScanPage : ContentPage
     private readonly IClipboardService _clipboardService;
     private readonly IDragDropService? _dragDropService;
     private readonly ScanSyncService _syncService;
+    private readonly IConfigService _configService;
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
@@ -22,6 +23,7 @@ public partial class ScanPage : ContentPage
         IImageProcessingService imageProcessingService,
         IClipboardService clipboardService,
         ScanSyncService syncService,
+        IConfigService configService,
         IDragDropService? dragDropService = null)
     {
         InitializeComponent();
@@ -31,12 +33,16 @@ public partial class ScanPage : ContentPage
         _clipboardService = clipboardService;
         _dragDropService = dragDropService;
         _syncService = syncService;
+        _configService = configService;
 
         // 监听来自其他设备的新扫描
         _syncService.NewScanReceived += OnNewScanReceived;
 
         // 监听连接状态变化
         _syncService.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // 监听错误事件
+        _syncService.ErrorOccurred += OnErrorOccurred;
 
         // 添加长按手势用于拖放
         var longPressGesture = new TapGestureRecognizer();
@@ -391,6 +397,17 @@ public partial class ScanPage : ContentPage
     {
         base.OnAppearing();
 
+        // 初始化配置
+        try
+        {
+            var config = await _configService.LoadConfigAsync();
+            System.Diagnostics.Debug.WriteLine($"配置加载成功: ServerUrl={config.ServerUrl}, ApiKey={(string.IsNullOrEmpty(config.ApiKey) ? "未设置" : "已设置")}");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"配置加载失败: {ex.Message}");
+        }
+
         // 页面显示时自动连接到服务器
         if (!_syncService.IsConnected)
         {
@@ -526,6 +543,14 @@ public partial class ScanPage : ContentPage
                 ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
                 ConnectionStatusLabel.Text = "未连接";
             }
+        });
+    }
+
+    private async void OnErrorOccurred(string errorMessage)
+    {
+        await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            await DisplayAlert("同步错误", errorMessage, "确定");
         });
     }
 }

@@ -12,6 +12,7 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
 {
     private readonly ScanSyncService _syncService;
     private readonly IClipboardService _clipboardService;
+    private readonly IConfigService _configService;
 
     public ObservableCollection<HistoryItemViewModel> HistoryItems { get; } = new();
 
@@ -36,15 +37,22 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
-    public HistoryPage(ScanSyncService syncService, IClipboardService clipboardService)
+    public HistoryPage(ScanSyncService syncService, IClipboardService clipboardService, IConfigService configService)
     {
         InitializeComponent();
 
         _syncService = syncService;
         _clipboardService = clipboardService;
+        _configService = configService;
 
         RefreshCommand = new Command(async () => await LoadHistoryAsync());
         DeleteCommand = new Command<HistoryItemViewModel>(async (item) => await DeleteItemAsync(item));
+
+        // 监听连接状态变化
+        _syncService.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // 监听错误事件
+        _syncService.ErrorOccurred += OnErrorOccurred;
 
         BindingContext = this;
     }
@@ -54,6 +62,24 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        // 初始化配置并连接服务器
+        try
+        {
+            var config = await _configService.LoadConfigAsync();
+            System.Diagnostics.Debug.WriteLine($"配置加载成功: ServerUrl={config.ServerUrl}, ApiKey={(string.IsNullOrEmpty(config.ApiKey) ? "未设置" : "已设置")}");
+
+            // 如果未连接，尝试连接
+            if (!_syncService.IsConnected)
+            {
+                await _syncService.ConnectAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"配置加载失败: {ex.Message}");
+        }
+
         await LoadHistoryAsync(showLoadingIndicator: true);
     }
 
@@ -293,5 +319,30 @@ public class HistoryItemViewModel : System.ComponentModel.INotifyPropertyChanged
         {
             // 加载失败使用占位图
         }
+    }
+
+    private void OnConnectionStateChanged(bool isConnected)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (isConnected)
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Green);
+                ConnectionStatusLabel.Text = "已连接";
+            }
+            else
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
+                ConnectionStatusLabel.Text = "未连接";
+            }
+        });
+    }
+
+    private async void OnErrorOccurred(string errorMessage)
+    {
+        await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            await DisplayAlert("同步错误", errorMessage, "确定");
+        });
     }
 }
