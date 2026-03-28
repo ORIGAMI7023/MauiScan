@@ -7,48 +7,168 @@
 
     <Grid RowDefinitions="*,Auto">
 
-        <!-- 图片预览（全屏） -->
-        <Image x:Name="PreviewImage"
-               Grid.Row="0"
-               Aspect="AspectFit"
-               BackgroundColor="Black"/>
+        <!-- 图片区域（包含图片和交互层） -->
+        <AbsoluteLayout Grid.Row="0" x:Name="ImageLayer" BackgroundColor="Black">
 
-        <!-- 底部操作栏 -->
+            <!-- 预览图片 -->
+            <Image x:Name="PreviewImage"
+                   Aspect="AspectFit"
+                   BackgroundColor="Black"
+                   AbsoluteLayout.LayoutBounds="0,0,1,1"
+                   AbsoluteLayout.LayoutFlags="All"/>
+
+            <!-- ROI矩形框交互层（仅ROI模式可见） -->
+            <AbsoluteLayout x:Name="ROILayer"
+                           IsVisible="False"
+                           AbsoluteLayout.LayoutBounds="0,0,1,1"
+                           AbsoluteLayout.LayoutFlags="All">
+
+                <!-- 遮罩层（4个BoxView拼成框外暗区） -->
+                <BoxView x:Name="MaskTop" BackgroundColor="#00000080"/>
+                <BoxView x:Name="MaskBottom" BackgroundColor="#00000080"/>
+                <BoxView x:Name="MaskLeft" BackgroundColor="#00000080"/>
+                <BoxView x:Name="MaskRight" BackgroundColor="#00000080"/>
+
+                <!-- 8个拖拽手柄 -->
+                <!-- 四角 -->
+                <BoxView x:Name="HandleTL" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleTR" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleBL" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleBR" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+
+                <!-- 四边中点 -->
+                <BoxView x:Name="HandleT" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleB" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleL" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+                <BoxView x:Name="HandleR" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>
+            </AbsoluteLayout>
+
+            <!-- 四点精确模式交互层（仅四点模式可见） -->
+            <AbsoluteLayout x:Name="FourPointLayer"
+                           IsVisible="False"
+                           AbsoluteLayout.LayoutBounds="0,0,1,1"
+                           AbsoluteLayout.LayoutFlags="All">
+
+                <!-- 4条连线 -->
+                <BoxView x:Name="LineT" HeightRequest="2" BackgroundColor="White"/>
+                <BoxView x:Name="LineR" HeightRequest="2" BackgroundColor="White"/>
+                <BoxView x:Name="LineB" HeightRequest="2" BackgroundColor="White"/>
+                <BoxView x:Name="LineL" HeightRequest="2" BackgroundColor="White"/>
+
+                <!-- 4个角点 -->
+                <Ellipse x:Name="PointTL" WidthRequest="30" HeightRequest="30" Fill="White"/>
+                <Ellipse x:Name="PointTR" WidthRequest="30" HeightRequest="30" Fill="White"/>
+                <Ellipse x:Name="PointBL" WidthRequest="30" HeightRequest="30" Fill="White"/>
+                <Ellipse x:Name="PointBR" WidthRequest="30" HeightRequest="30" Fill="White"/>
+            </AbsoluteLayout>
+        </AbsoluteLayout>
+
+        <!-- 底部工具栏 -->
         <Grid Grid.Row="1"
-              ColumnDefinitions="*,*,*"
               ColumnSpacing="8"
               Padding="16,12"
               BackgroundColor="#1A1A1A">
 
-            <!-- 重拍 -->
-            <Button Grid.Column="0"
-                    Text="重拍"
-                    Clicked="OnRetakeClicked"
-                    BackgroundColor="#444"
-                    TextColor="White"
-                    HeightRequest="50"
-                    CornerRadius="8"/>
+            <!-- 结果预览模式工具栏（4列：重拍/左转/右转/使用） -->
+            <Grid x:Name="ResultToolbar"
+                  ColumnDefinitions="*,*,*,*"
+                  ColumnSpacing="8"
+                  IsVisible="True">
 
-            <!-- 旋转 -->
-            <Button Grid.Column="1"
-                    x:Name="RotateButton"
-                    Text="↻ 旋转"
-                    Clicked="OnRotateClicked"
-                    BackgroundColor="#6C757D"
-                    TextColor="White"
-                    HeightRequest="50"
-                    CornerRadius="8"/>
+                <Button Grid.Column="0"
+                        Text="重拍"
+                        Clicked="OnRetakeClicked"
+                        BackgroundColor="#444"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
 
-            <!-- 确认使用 -->
-            <Button Grid.Column="2"
-                    x:Name="ConfirmButton"
-                    Text="✓ 使用"
-                    Clicked="OnConfirmClicked"
-                    BackgroundColor="#512BD4"
-                    TextColor="White"
-                    HeightRequest="50"
-                    CornerRadius="8"/>
+                <Button Grid.Column="1"
+                        Text="↺ 左转"
+                        Clicked="OnRotateLeftClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
 
+                <Button Grid.Column="2"
+                        Text="↻ 右转"
+                        Clicked="OnRotateRightClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="3"
+                        Text="✓ 使用"
+                        Clicked="OnConfirmClicked"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+            </Grid>
+
+            <!-- ROI矩形框模式工具栏（3列：重拍/四点/识别） -->
+            <Grid x:Name="ROIToolbar"
+                  ColumnDefinitions="*,*,*"
+                  ColumnSpacing="8"
+                  IsVisible="False">
+
+                <Button Grid.Column="0"
+                        Text="重拍"
+                        Clicked="OnRetakeClicked"
+                        BackgroundColor="#444"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="1"
+                        Text="四点模式"
+                        Clicked="OnSwitchToFourPointClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="2"
+                        Text="框内识别"
+                        Clicked="OnROIDetectClicked"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+            </Grid>
+
+            <!-- 四点精确模式工具栏（3列：重拍/矩形框/裁切） -->
+            <Grid x:Name="FourPointToolbar"
+                  ColumnDefinitions="*,*,*"
+                  ColumnSpacing="8"
+                  IsVisible="False">
+
+                <Button Grid.Column="0"
+                        Text="重拍"
+                        Clicked="OnRetakeClicked"
+                        BackgroundColor="#444"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="1"
+                        Text="矩形框模式"
+                        Clicked="OnSwitchToROIClicked"
+                        BackgroundColor="#6C757D"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+
+                <Button Grid.Column="2"
+                        Text="应用裁切"
+                        Clicked="OnFourPointApplyClicked"
+                        BackgroundColor="#512BD4"
+                        TextColor="White"
+                        HeightRequest="50"
+                        CornerRadius="8"/>
+            </Grid>
         </Grid>
 
     </Grid>
