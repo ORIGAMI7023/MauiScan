@@ -19,6 +19,9 @@ public partial class ScanPreviewPage : ContentPage
     private double _imageOffsetX, _imageOffsetY;
     private double _imageScale;
 
+    // 原图像素尺寸（可靠来源）
+    private int _nativeImageW, _nativeImageH;
+
     // 四点相关
     private (double x, double y)[] _cornerPoints = new (double, double)[4];
     private PanGestureRecognizer?[] _cornerGestures = new PanGestureRecognizer?[4];
@@ -83,6 +86,14 @@ public partial class ScanPreviewPage : ContentPage
 
     private void OnDebugEnableROIClicked(object sender, EventArgs e)
     {
+        // DEBUG模式下，如果没有原始照片，使用当前图片数据作为原图
+        if (_originalPhoto == null)
+            _originalPhoto = _imageData;
+
+        // 重置尺寸缓存，强制重新解码
+        _nativeImageW = 0;
+        _nativeImageH = 0;
+
         SetMode(PreviewMode.ROI);
         CalculateImageTransform();
         InitializeROI();
@@ -113,14 +124,15 @@ public partial class ScanPreviewPage : ContentPage
         if (controlW <= 0 || controlH <= 0)
             return;
 
-        // 从JPEG字节数据中提取宽高
-        double nativeW = 1920, nativeH = 1080; // 默认值
-
-        try
+        // 获取原图像素尺寸（使用已缓存的值或重新解码）
+        if (_nativeImageW <= 0 || _nativeImageH <= 0)
         {
-            (nativeW, nativeH) = ExtractImageDimensions(_imageData);
+            var sourceData = _originalPhoto ?? _imageData;
+            (_nativeImageW, _nativeImageH) = DecodeImageDimensions(sourceData);
         }
-        catch { }
+
+        double nativeW = _nativeImageW;
+        double nativeH = _nativeImageH;
 
         // 计算AspectFit的缩放比例和渲染尺寸
         _imageScale = Math.Min(controlW / nativeW, controlH / nativeH);
@@ -129,26 +141,35 @@ public partial class ScanPreviewPage : ContentPage
         _imageOffsetX = (controlW - _imageRenderW) / 2;
         _imageOffsetY = (controlH - _imageRenderH) / 2;
 
-        System.Diagnostics.Debug.WriteLine($"Image Transform: controlW={controlW}, controlH={controlH}, nativeW={nativeW}, nativeH={nativeH}, scale={_imageScale}");
-        System.Diagnostics.Debug.WriteLine($"Render: w={_imageRenderW}, h={_imageRenderH}, offsetX={_imageOffsetX}, offsetY={_imageOffsetY}");
+        System.Diagnostics.Debug.WriteLine($"[Coord] Image Transform: control=({controlW:F0}x{controlH:F0}), native=({nativeW}x{nativeH}), scale={_imageScale:F4}");
+        System.Diagnostics.Debug.WriteLine($"[Coord] Render: size=({_imageRenderW:F0}x{_imageRenderH:F0}), offset=({_imageOffsetX:F0},{_imageOffsetY:F0})");
     }
 
     /// <summary>
-    /// 从JPEG字节数据中提取宽高
+    /// 可靠地获取图片像素尺寸（使用平台API解码header）
     /// </summary>
-    private (double width, double height) ExtractImageDimensions(byte[] imageData)
+    private (int width, int height) DecodeImageDimensions(byte[] imageData)
     {
-        // JPEG SOF0标记 (0xFFC0) 之后的内容包含宽高
+#if ANDROID
+        var options = new Android.Graphics.BitmapFactory.Options { InJustDecodeBounds = true };
+        Android.Graphics.BitmapFactory.DecodeByteArray(imageData, 0, imageData.Length, options);
+        int w = options.OutWidth;
+        int h = options.OutHeight;
+        System.Diagnostics.Debug.WriteLine($"[Coord] DecodeImageDimensions (Android): {w}x{h}");
+        return (w > 0 ? w : 1920, h > 0 ? h : 1080);
+#else
+        // 回退：扫描JPEG SOF标记
         for (int i = 0; i < imageData.Length - 8; i++)
         {
             if (imageData[i] == 0xFF && (imageData[i + 1] == 0xC0 || imageData[i + 1] == 0xC2))
             {
                 int height = (imageData[i + 5] << 8) | imageData[i + 6];
                 int width = (imageData[i + 7] << 8) | imageData[i + 8];
-                return (width, height);
+                if (width > 0 && height > 0) return (width, height);
             }
         }
         return (1920, 1080);
+#endif
     }
 
     /// <summary>
@@ -556,9 +577,11 @@ public partial class ScanPreviewPage : ContentPage
 
     private async void OnROIDetectClicked(object sender, EventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine($"OnROIDetectClicked: service={_imageProcessingService != null}, photo={_originalPhoto != null}");
+        // 如果没有原始照片，使用当前显示的图片（失败路径中 _imageData 就是原图）
+        var sourcePhoto = _originalPhoto ?? _imageData;
+        System.Diagnostics.Debug.WriteLine($"OnROIDetectClicked: service={_imageProcessingService != null}, photo={sourcePhoto != null}");
 
-        if (_imageProcessingService == null || _originalPhoto == null)
+        if (_imageProcessingService == null || sourcePhoto == null)
         {
             await DisplayAlert("错误", "服务或原始照片不可用", "确定");
             return;
@@ -566,34 +589,72 @@ public partial class ScanPreviewPage : ContentPage
 
         try
         {
-            // 显示加载指示器
-            await MainThread.InvokeOnMainThreadAsync(() =>
-            {
-                // 这里应该显示加载动画，但预览页没有，暂时用DisplayAlert提示
-            });
-
             // 将ROI屏幕坐标转为像素坐标
-            var (roi_x, roi_y) = ScreenToImagePixel(_roiX, _roiY);
-            var (roi_w, roi_h) = ScreenToImagePixel(_roiX + _roiW, _roiY + _roiH);
-            roi_w -= roi_x;
-            roi_h -= roi_y;
+            double pixelLeft = (_roiX - _imageOffsetX) / _imageScale;
+            double pixelTop = (_roiY - _imageOffsetY) / _imageScale;
+            double pixelRight = (_roiX + _roiW - _imageOffsetX) / _imageScale;
+            double pixelBottom = (_roiY + _roiH - _imageOffsetY) / _imageScale;
+
+            // 限制在图片范围内
+            int cropX = Math.Max(0, (int)pixelLeft);
+            int cropY = Math.Max(0, (int)pixelTop);
+            int cropW = Math.Min(_nativeImageW, (int)pixelRight) - cropX;
+            int cropH = Math.Min(_nativeImageH, (int)pixelBottom) - cropY;
+
+            System.Diagnostics.Debug.WriteLine($"[ROI] Screen: x={_roiX:F0}, y={_roiY:F0}, w={_roiW:F0}, h={_roiH:F0}");
+            System.Diagnostics.Debug.WriteLine($"[ROI] Pixel crop: x={cropX}, y={cropY}, w={cropW}, h={cropH} (image={_nativeImageW}x{_nativeImageH})");
+
+            if (cropW <= 50 || cropH <= 50)
+            {
+                await DisplayAlert("范围太小", "请调大选择范围后重试", "确定");
+                return;
+            }
 
             // 裁剪ROI区域
-            byte[] roiBytes = CropImageROI(_originalPhoto, (int)roi_x, (int)roi_y, (int)roi_w, (int)roi_h);
+            byte[] roiBytes = CropImageROI(sourcePhoto, cropX, cropY, cropW, cropH);
 
-            // 在ROI区域内尝试识别
-            var result = await _imageProcessingService.ProcessScanAsync(roiBytes, false);
+            // 第一步：在ROI区域内检测文档边界（不裁切）
+            var bounds = await _imageProcessingService.DetectDocumentBoundsAsync(roiBytes, 0.05);
+
+            if (bounds == null)
+            {
+                await DisplayAlert("未识别到", "未能在选定区域识别到文档边框，请调整范围或切换到四点模式手动标注", "确定");
+                return;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[ROI] 检测到边界: TL=({bounds.TopLeft.X:F0},{bounds.TopLeft.Y:F0}) BR=({bounds.BottomRight.X:F0},{bounds.BottomRight.Y:F0})");
+
+            // 第二步：使用检测到的边界进行透视变换
+            var nativeService = _imageProcessingService as NativeImageProcessingService;
+            if (nativeService == null)
+            {
+                await DisplayAlert("错误", "图像处理服务不可用", "确定");
+                return;
+            }
+
+            var quad = new NativeImageProcessingService.QuadPoints
+            {
+                TopLeftX = (float)bounds.TopLeft.X,
+                TopLeftY = (float)bounds.TopLeft.Y,
+                TopRightX = (float)bounds.TopRight.X,
+                TopRightY = (float)bounds.TopRight.Y,
+                BottomRightX = (float)bounds.BottomRight.X,
+                BottomRightY = (float)bounds.BottomRight.Y,
+                BottomLeftX = (float)bounds.BottomLeft.X,
+                BottomLeftY = (float)bounds.BottomLeft.Y,
+            };
+
+            var result = await Task.Run(() => nativeService.ApplyPerspectiveTransform(roiBytes, quad));
 
             if (result.IsSuccess)
             {
-                // 成功：切换到结果预览模式
                 _imageData = result.ImageData;
                 PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
                 SetMode(PreviewMode.Result);
             }
             else
             {
-                await DisplayAlert("未识别到", "未能在选定区域识别到边框，请调整范围或切换到四点模式手动标注", "确定");
+                await DisplayAlert("裁切失败", result.ErrorMessage ?? "透视变换失败", "确定");
             }
         }
         catch (Exception ex)
@@ -604,9 +665,10 @@ public partial class ScanPreviewPage : ContentPage
 
     private async void OnFourPointApplyClicked(object sender, EventArgs e)
     {
-        System.Diagnostics.Debug.WriteLine($"OnFourPointApplyClicked: service={_imageProcessingService != null}, photo={_originalPhoto != null}");
+        var sourcePhoto = _originalPhoto ?? _imageData;
+        System.Diagnostics.Debug.WriteLine($"OnFourPointApplyClicked: service={_imageProcessingService != null}, photo={sourcePhoto != null}");
 
-        if (_imageProcessingService == null || _originalPhoto == null)
+        if (_imageProcessingService == null || sourcePhoto == null)
         {
             await DisplayAlert("错误", "服务或原始照片不可用", "确定");
             return;
@@ -614,7 +676,11 @@ public partial class ScanPreviewPage : ContentPage
 
         try
         {
-            // 将4个角点从像素坐标转为NativeImageProcessingService.QuadPoints
+            // _cornerPoints 存的是像素坐标，直接传给 native
+            System.Diagnostics.Debug.WriteLine($"[4Point] TL=({_cornerPoints[0].x:F0},{_cornerPoints[0].y:F0}) TR=({_cornerPoints[1].x:F0},{_cornerPoints[1].y:F0})");
+            System.Diagnostics.Debug.WriteLine($"[4Point] BR=({_cornerPoints[2].x:F0},{_cornerPoints[2].y:F0}) BL=({_cornerPoints[3].x:F0},{_cornerPoints[3].y:F0})");
+            System.Diagnostics.Debug.WriteLine($"[4Point] Image size: {_nativeImageW}x{_nativeImageH}");
+
             var quad = new NativeImageProcessingService.QuadPoints
             {
                 TopLeftX = (float)_cornerPoints[0].x,
@@ -635,7 +701,7 @@ public partial class ScanPreviewPage : ContentPage
                 return;
             }
 
-            var result = await Task.Run(() => nativeService.ApplyPerspectiveTransform(_originalPhoto, quad));
+            var result = await Task.Run(() => nativeService.ApplyPerspectiveTransform(sourcePhoto, quad));
 
             if (result.IsSuccess)
             {
