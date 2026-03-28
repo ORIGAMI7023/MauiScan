@@ -51,20 +51,32 @@ try {
     Write-Success "mauiscan-server.service installed"
 
     # Step 4: Upload Server
-    Write-Step "Step 4/6: Uploading Server"
+    Write-Step "Step 4/7: Uploading Server"
     ssh $SERVER "mkdir -p /var/www/mauiscan-server/data/scans"
     scp -r MauiScan.Server/bin/Release/net10.0/publish/* ${SERVER}:/var/www/mauiscan-server/
     if ($LASTEXITCODE -ne 0) { throw "Server upload failed" }
     Write-Success "Server upload completed"
 
-    # Step 5: Set directory ownership
-    Write-Step "Step 5/6: Setting directory ownership"
+    # Step 5: Upload appsettings.json
+    Write-Step "Step 5/7: Uploading appsettings.json"
+    if (Test-Path "MauiScan.Server/appsettings.json") {
+        scp MauiScan.Server/appsettings.json ${SERVER}:/var/www/mauiscan-server/appsettings.json
+        if ($LASTEXITCODE -ne 0) { throw "appsettings.json upload failed" }
+        Write-Success "appsettings.json uploaded (contains API Key)"
+    } else {
+        Write-Host "[WARN] MauiScan.Server/appsettings.json not found!" -ForegroundColor Yellow
+        Write-Host "[WARN] Please create it from appsettings.example.json" -ForegroundColor Yellow
+        Write-Host "[WARN] Server will use default configuration (NO API KEY!)" -ForegroundColor Yellow
+    }
+
+    # Step 6: Set directory ownership
+    Write-Step "Step 6/7: Setting directory ownership"
     ssh $SERVER "sudo chown -R origami:origami /var/www/mauiscan-server"
     if ($LASTEXITCODE -ne 0) { throw "Directory ownership setup failed" }
     Write-Success "Directory ownership set to origami:origami"
 
-    # Step 6: Test and reload nginx
-    Write-Step "Step 6/6: Testing and reloading nginx and restarting service"
+    # Step 7: Test and reload nginx
+    Write-Step "Step 7/7: Testing and reloading nginx and restarting service"
     $reloadCommand = 'sudo nginx -t && sudo systemctl reload nginx && sudo systemctl daemon-reload && sudo systemctl enable mauiscan-server && sudo systemctl restart mauiscan-server && sleep 2 && sudo systemctl status mauiscan-server'
     ssh $SERVER $reloadCommand
     if ($LASTEXITCODE -ne 0) { throw "Service reload failed" }
