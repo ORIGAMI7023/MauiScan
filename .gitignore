@@ -105,6 +105,12 @@ data/
 AnnotationTool/bin/
 AnnotationTool/obj/
 AnnotationTool/data_augmented/
+AnnotationTool/data/
+AnnotationTool/training_data/
+AnnotationTool/test_homography/
+AnnotationTool/test_results/
+AnnotationTool/visualization/
+AnnotationTool/*.pth
 
 # ML Training artifacts (large files - 排除所有训练相关图片和模型)
 MauiScan.ML.Training/checkpoints/
