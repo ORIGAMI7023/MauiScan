@@ -1,5 +1,6 @@
 using MauiScan.Server.Models;
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Processing;
 
 namespace MauiScan.Server.Services;
 
@@ -7,6 +8,7 @@ public interface IFileStorageService
 {
     Task<ScanImageDto> SaveFileAsync(IFormFile file, int width, int height);
     Task<(byte[] fileData, string contentType)?> GetFileAsync(string fileName);
+    Task<(byte[] fileData, string contentType)?> GetThumbnailAsync(string fileName);
     Task<List<ScanImageDto>> GetRecentScansAsync(int limit = 10);
     Task<bool> DeleteFileAsync(string fileName);
     Task SaveTrainingImageAsync(IFormFile file, string referenceName);
@@ -16,7 +18,9 @@ public class FileStorageService : IFileStorageService
 {
     private readonly string _storageDirectory;
     private readonly string _trainingDirectory;
+    private readonly string _thumbnailDirectory;
     private readonly long _maxFileSizeBytes;
+    private const int ThumbnailSize = 200;
 
     public FileStorageService(IConfiguration configuration)
     {
@@ -24,10 +28,18 @@ public class FileStorageService : IFileStorageService
         _trainingDirectory = configuration["Storage:TrainingDataDirectory"] ?? "data/training";
         _maxFileSizeBytes = (configuration.GetValue<int?>("Storage:MaxFileSizeMB") ?? 20) * 1024 * 1024;
 
+        _thumbnailDirectory = Path.Combine(_storageDirectory, "thumbnails");
+
         // 确保存储目录存在
         if (!Directory.Exists(_storageDirectory))
         {
             Directory.CreateDirectory(_storageDirectory);
+        }
+
+        // 确保缩略图目录存在
+        if (!Directory.Exists(_thumbnailDirectory))
+        {
+            Directory.CreateDirectory(_thumbnailDirectory);
         }
 
         // 确保训练目录存在
@@ -58,6 +70,9 @@ public class FileStorageService : IFileStorageService
 
         var fileInfo = new FileInfo(filePath);
 
+        // 生成缩略图
+        await GenerateThumbnailAsync(filePath, fileName);
+
         var scanImage = new ScanImageDto
         {
             FileName = fileName,
@@ -65,7 +80,8 @@ public class FileStorageService : IFileStorageService
             Width = width,
             Height = height,
             ScannedAt = DateTime.UtcNow.AddHours(8),  // 转换为北京时间 (UTC+8)
-            DownloadUrl = $"/api/scans/{fileName}"
+            DownloadUrl = $"/api/scans/{fileName}",
+            ThumbnailUrl = $"/api/scans/{fileName}/thumbnail"
         };
 
         // 保存元数据到 JSON 文件
@@ -91,6 +107,52 @@ public class FileStorageService : IFileStorageService
 
         var fileData = await File.ReadAllBytesAsync(filePath);
         return (fileData, "image/jpeg");
+    }
+
+    public async Task<(byte[] fileData, string contentType)?> GetThumbnailAsync(string fileName)
+    {
+        // 防止路径穿越攻击
+        if (fileName.Contains("..") || fileName.Contains("/") || fileName.Contains("\\"))
+        {
+            return null;
+        }
+
+        var thumbnailPath = Path.Combine(_thumbnailDirectory, fileName);
+
+        // 如果缩略图不存在，尝试即时生成
+        if (!File.Exists(thumbnailPath))
+        {
+            var originalPath = Path.Combine(_storageDirectory, fileName);
+            if (!File.Exists(originalPath))
+                return null;
+
+            await GenerateThumbnailAsync(originalPath, fileName);
+        }
+
+        if (!File.Exists(thumbnailPath))
+            return null;
+
+        var fileData = await File.ReadAllBytesAsync(thumbnailPath);
+        return (fileData, "image/jpeg");
+    }
+
+    private async Task GenerateThumbnailAsync(string sourcePath, string fileName)
+    {
+        var thumbnailPath = Path.Combine(_thumbnailDirectory, fileName);
+        try
+        {
+            using var image = await Image.LoadAsync(sourcePath);
+            image.Mutate(x => x.Resize(new ResizeOptions
+            {
+                Size = new Size(ThumbnailSize, ThumbnailSize),
+                Mode = ResizeMode.Max
+            }));
+            await image.SaveAsJpegAsync(thumbnailPath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"生成缩略图失败 {fileName}: {ex.Message}");
+        }
     }
 
     public async Task<List<ScanImageDto>> GetRecentScansAsync(int limit = 10)
@@ -120,15 +182,24 @@ public class FileStorageService : IFileStorageService
                 metadata = await ReconstructMetadataFromImageAsync(file.FullName);
             }
 
-            result.Add(metadata ?? new ScanImageDto
+            var item = metadata ?? new ScanImageDto
             {
                 FileName = file.Name,
                 FileSize = file.Length,
                 Width = -1,
                 Height = -1,
                 ScannedAt = file.LastWriteTimeUtc.AddHours(8),
-                DownloadUrl = $"/api/scans/{file.Name}"
-            });
+                DownloadUrl = $"/api/scans/{file.Name}",
+                ThumbnailUrl = $"/api/scans/{file.Name}/thumbnail"
+            };
+
+            // 补全旧数据缺少的 ThumbnailUrl
+            if (string.IsNullOrEmpty(item.ThumbnailUrl))
+            {
+                item.ThumbnailUrl = $"/api/scans/{file.Name}/thumbnail";
+            }
+
+            result.Add(item);
         }
 
         return result;
@@ -189,7 +260,8 @@ public class FileStorageService : IFileStorageService
                 Width = imageInfo.Width,
                 Height = imageInfo.Height,
                 ScannedAt = fileInfo.LastWriteTimeUtc,  // 将在调用方转换为北京时间
-                DownloadUrl = $"/api/scans/{Path.GetFileName(imagePath)}"
+                DownloadUrl = $"/api/scans/{Path.GetFileName(imagePath)}",
+                ThumbnailUrl = $"/api/scans/{Path.GetFileName(imagePath)}/thumbnail"
             };
 
             // 保存元数据，避免下次重复读取
@@ -215,6 +287,7 @@ public class FileStorageService : IFileStorageService
 
         var filePath = Path.Combine(_storageDirectory, fileName);
         var metadataPath = Path.Combine(_storageDirectory, $"{fileName}.json");
+        var thumbnailPath = Path.Combine(_thumbnailDirectory, fileName);
 
         bool deleted = false;
 
@@ -227,6 +300,11 @@ public class FileStorageService : IFileStorageService
         if (File.Exists(metadataPath))
         {
             File.Delete(metadataPath);
+        }
+
+        if (File.Exists(thumbnailPath))
+        {
+            File.Delete(thumbnailPath);
         }
 
         // 删除对应的训练图片

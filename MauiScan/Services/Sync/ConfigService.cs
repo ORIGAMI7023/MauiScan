@@ -89,6 +89,33 @@ public class ConfigService : IConfigService
                 }
             }
 
+            // 尝试从嵌入资源读取（生产环境默认配置）
+            try
+            {
+                using var stream = FileSystem.OpenAppPackageFileAsync("sync_config.json").GetAwaiter().GetResult();
+                if (stream != null)
+                {
+                    Console.WriteLine($"📦 使用嵌入资源配置: sync_config.json");
+                    using var reader = new StreamReader(stream);
+                    var json = await reader.ReadToEndAsync();
+                    var config = JsonSerializer.Deserialize<SyncConfig>(json, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                    if (config != null)
+                    {
+                        // 保存到 AppData，方便后续修改
+                        await SaveConfigAsync(config);
+                        return config;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"⚠️  无法读取嵌入资源配置: {ex.Message}");
+            }
+
             // 如果都不存在，创建默认配置
             return await GetOrCreateDefaultConfigAsync();
         }

@@ -11,6 +11,9 @@
 		either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
 		<!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
 
+		<!-- Android Runtime Identifiers (CPU Architectures) -->
+		<RuntimeIdentifiers Condition="'$(TargetFramework)' == 'net10.0-android'">android-arm64;android-arm</RuntimeIdentifiers>
+
 		<OutputType>Exe</OutputType>
 		<RootNamespace>MauiScan</RootNamespace>
 		<UseMaui>true</UseMaui>
@@ -33,7 +36,7 @@
 
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'ios'">15.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'maccatalyst'">15.0</SupportedOSPlatformVersion>
-		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">21.0</SupportedOSPlatformVersion>
+		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">23.0</SupportedOSPlatformVersion>
 		<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
 	</PropertyGroup>
@@ -63,6 +66,9 @@
 
 		<!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
 		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+
+		<!-- Sync Config (Embedded Resource for Production) -->
+		<MauiAsset Include="..\sync_config.json" Link="sync_config.json" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -77,14 +83,19 @@
 		<ProjectReference Include="..\MauiScan.ML\MauiScan.ML.csproj" />
 	</ItemGroup>
 
-	<!-- Android CameraX (暂时禁用，有依赖冲突) -->
-	<!--
+	<!-- Android CameraX -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
-		<PackageReference Include="Xamarin.AndroidX.Camera.Camera2" Version="1.4.0.2" />
-		<PackageReference Include="Xamarin.AndroidX.Camera.Lifecycle" Version="1.4.0.2" />
-		<PackageReference Include="Xamarin.AndroidX.Camera.View" Version="1.4.0.2" />
+		<PackageReference Include="Xamarin.AndroidX.Camera.Core" Version="1.5.3.1" />
+		<PackageReference Include="Xamarin.AndroidX.Camera.Camera2" Version="1.5.3.1" />
+		<PackageReference Include="Xamarin.AndroidX.Camera.Lifecycle" Version="1.5.3.1" />
 	</ItemGroup>
-	-->
+
+	<!-- 排除归档目录，不参与编译 -->
+	<ItemGroup>
+		<Compile Remove="_archived\**" />
+		<MauiXaml Remove="_archived\**" />
+		<None Include="_archived\**" />
+	</ItemGroup>
 
 	<!-- Native C++ OpenCV 库配置 -->
 	<ItemGroup Condition="'$(TargetFramework)' == 'net10.0-android'">

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="MauiScan.Views.ScanPreviewPage"
+             Title="预览"
+             BackgroundColor="Black">
+
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- 图片预览（全屏） -->
+        <Image x:Name="PreviewImage"
+               Grid.Row="0"
+               Aspect="AspectFit"
+               BackgroundColor="Black"/>
+
+        <!-- 底部操作栏 -->
+        <Grid Grid.Row="1"
+              ColumnDefinitions="*,*,*"
+              ColumnSpacing="8"
+              Padding="16,12"
+              BackgroundColor="#1A1A1A">
+
+            <!-- 重拍 -->
+            <Button Grid.Column="0"
+                    Text="重拍"
+                    Clicked="OnRetakeClicked"
+                    BackgroundColor="#444"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"/>
+
+            <!-- 旋转 -->
+            <Button Grid.Column="1"
+                    x:Name="RotateButton"
+                    Text="↻ 旋转"
+                    Clicked="OnRotateClicked"
+                    BackgroundColor="#6C757D"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"/>
+
+            <!-- 确认使用 -->
+            <Button Grid.Column="2"
+                    x:Name="ConfirmButton"
+                    Text="✓ 使用"
+                    Clicked="OnConfirmClicked"
+                    BackgroundColor="#512BD4"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"/>
+
+        </Grid>
+
+    </Grid>
+
+</ContentPage>

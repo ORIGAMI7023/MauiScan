@@ -94,6 +94,15 @@
                         CornerRadius="8"/>
             </Grid>
 
+            <!-- 刷新按钮 -->
+            <Button x:Name="RefreshButton"
+                    Text="🔄 获取最新扫描"
+                    Clicked="OnRefreshClicked"
+                    BackgroundColor="#17A2B8"
+                    TextColor="White"
+                    HeightRequest="50"
+                    CornerRadius="8"/>
+
             <!-- 保存按钮 -->
             <Button x:Name="SaveButton"
                     Text="💾 保存到本地"
