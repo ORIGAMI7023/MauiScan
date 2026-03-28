@@ -30,6 +30,10 @@ public partial class ScanPreviewPage : ContentPage
     private int _draggingHandleIndex = -1;
     private int _draggingCornerIndex = -1;
 
+    // 用于减少UI更新频率
+    private bool _pendingROIUpdate = false;
+    private bool _pendingFourPointUpdate = false;
+
     public event Action<byte[]>? Confirmed;
     public event Action? Retake;
 
@@ -411,8 +415,16 @@ public partial class ScanPreviewPage : ContentPage
                 if (newRoiW >= 100) _roiW = newRoiW;
                 if (newRoiH >= 100) _roiH = newRoiH;
 
-                // 批量更新UI，减少重绘
-                MainThread.BeginInvokeOnMainThread(() => UpdateROIHandles());
+                // 标记需要更新，避免频繁重绘
+                if (!_pendingROIUpdate)
+                {
+                    _pendingROIUpdate = true;
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        UpdateROIHandles();
+                        _pendingROIUpdate = false;
+                    });
+                }
                 break;
 
             case GestureStatus.Completed:
@@ -445,7 +457,17 @@ public partial class ScanPreviewPage : ContentPage
                 var (pixelX, pixelY) = ScreenToImagePixel(currentScreenX, currentScreenY);
 
                 _cornerPoints[pointIndex] = (pixelX, pixelY);
-                MainThread.BeginInvokeOnMainThread(() => UpdateFourPointLines());
+
+                // 标记需要更新，避免频繁重绘
+                if (!_pendingFourPointUpdate)
+                {
+                    _pendingFourPointUpdate = true;
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        UpdateFourPointLines();
+                        _pendingFourPointUpdate = false;
+                    });
+                }
                 break;
 
             case GestureStatus.Completed:
@@ -534,6 +556,8 @@ public partial class ScanPreviewPage : ContentPage
 
     private async void OnROIDetectClicked(object sender, EventArgs e)
     {
+        System.Diagnostics.Debug.WriteLine($"OnROIDetectClicked: service={_imageProcessingService != null}, photo={_originalPhoto != null}");
+
         if (_imageProcessingService == null || _originalPhoto == null)
         {
             await DisplayAlert("错误", "服务或原始照片不可用", "确定");
@@ -580,6 +604,8 @@ public partial class ScanPreviewPage : ContentPage
 
     private async void OnFourPointApplyClicked(object sender, EventArgs e)
     {
+        System.Diagnostics.Debug.WriteLine($"OnFourPointApplyClicked: service={_imageProcessingService != null}, photo={_originalPhoto != null}");
+
         if (_imageProcessingService == null || _originalPhoto == null)
         {
             await DisplayAlert("错误", "服务或原始照片不可用", "确定");
