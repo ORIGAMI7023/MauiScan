@@ -45,8 +45,6 @@ public partial class ScanPreviewPage : ContentPage
         _imageProcessingService = imageProcessingService;
         _originalPhoto = originalPhoto;
 
-        System.Diagnostics.Debug.WriteLine($"ScanPreviewPage init: isAutoSuccess={isAutoSuccess}, service={imageProcessingService?.GetType().Name ?? "null"}, photo={originalPhoto?.Length ?? 0} bytes");
-
         PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(imageData));
 
         if (isAutoSuccess)
@@ -538,7 +536,7 @@ public partial class ScanPreviewPage : ContentPage
     {
         if (_imageProcessingService == null || _originalPhoto == null)
         {
-            await DisplayAlert("错误", $"服务状态 - Service: {(_imageProcessingService?.GetType().Name ?? "null")}, Photo: {(_originalPhoto != null ? _originalPhoto.Length + " bytes" : "null")}", "确定");
+            await DisplayAlert("错误", "服务或原始照片不可用", "确定");
             return;
         }
 
@@ -584,7 +582,7 @@ public partial class ScanPreviewPage : ContentPage
     {
         if (_imageProcessingService == null || _originalPhoto == null)
         {
-            await DisplayAlert("错误", $"Service: {_imageProcessingService?.GetType().Name ?? "null"}, Photo: {(_originalPhoto != null ? _originalPhoto.Length + " bytes" : "null")}", "确定");
+            await DisplayAlert("错误", "服务或原始照片不可用", "确定");
             return;
         }
 

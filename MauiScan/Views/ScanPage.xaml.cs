@@ -154,7 +154,6 @@ public partial class ScanPage : ContentPage
 
     private async Task ShowPreviewAsync(byte[] imageData, bool isAutoSuccess = true)
     {
-        System.Diagnostics.Debug.WriteLine($"ShowPreviewAsync: isAutoSuccess={isAutoSuccess}, _originalPhotoBytes={_originalPhotoBytes?.Length ?? 0} bytes, service={_imageProcessingService?.GetType().Name ?? "null"}");
         var previewPage = new ScanPreviewPage(
             imageData: imageData,
             isAutoSuccess: isAutoSuccess,
