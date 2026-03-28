@@ -76,6 +76,13 @@ public partial class ScanPreviewPage : ContentPage
         }
     }
 
+    private void OnDebugEnableROIClicked(object sender, EventArgs e)
+    {
+        SetMode(PreviewMode.ROI);
+        CalculateImageTransform();
+        InitializeROI();
+    }
+
     private void OnPreviewImageSizeChanged(object? sender, EventArgs e)
     {
         CalculateImageTransform();
