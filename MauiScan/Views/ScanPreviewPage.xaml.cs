@@ -25,6 +25,7 @@ public partial class ScanPreviewPage : ContentPage
 
     // 手势拖拽的起始位置（用于累积delta）
     private double _roiHandleDragStartX, _roiHandleDragStartY;
+    private double _roiDragStartRoiX, _roiDragStartRoiY, _roiDragStartRoiW, _roiDragStartRoiH;
     private double _cornerPointDragStartX, _cornerPointDragStartY;
     private int _draggingHandleIndex = -1;
     private int _draggingCornerIndex = -1;
@@ -346,8 +347,11 @@ public partial class ScanPreviewPage : ContentPage
         {
             case GestureStatus.Started:
                 _draggingHandleIndex = handleIndex;
-                _roiHandleDragStartX = _roiX;
-                _roiHandleDragStartY = _roiY;
+                // 保存拖拽开始时的完整ROI状态
+                _roiDragStartRoiX = _roiX;
+                _roiDragStartRoiY = _roiY;
+                _roiDragStartRoiW = _roiW;
+                _roiDragStartRoiH = _roiH;
                 break;
 
             case GestureStatus.Running:
@@ -356,9 +360,11 @@ public partial class ScanPreviewPage : ContentPage
                 double deltaX = e.TotalX;
                 double deltaY = e.TotalY;
 
-                // 恢复初始状态，然后应用delta
-                _roiX = _roiHandleDragStartX;
-                _roiY = _roiHandleDragStartY;
+                // 从起始状态恢复，然后应用delta
+                _roiX = _roiDragStartRoiX;
+                _roiY = _roiDragStartRoiY;
+                _roiW = _roiDragStartRoiW;
+                _roiH = _roiDragStartRoiH;
                 double newRoiW = _roiW;
                 double newRoiH = _roiH;
 
