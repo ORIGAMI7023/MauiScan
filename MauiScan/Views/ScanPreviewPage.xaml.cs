@@ -411,7 +411,8 @@ public partial class ScanPreviewPage : ContentPage
                 if (newRoiW >= 100) _roiW = newRoiW;
                 if (newRoiH >= 100) _roiH = newRoiH;
 
-                UpdateROIHandles();
+                // 批量更新UI，减少重绘
+                MainThread.BeginInvokeOnMainThread(() => UpdateROIHandles());
                 break;
 
             case GestureStatus.Completed:
@@ -444,7 +445,7 @@ public partial class ScanPreviewPage : ContentPage
                 var (pixelX, pixelY) = ScreenToImagePixel(currentScreenX, currentScreenY);
 
                 _cornerPoints[pointIndex] = (pixelX, pixelY);
-                UpdateFourPointLines();
+                MainThread.BeginInvokeOnMainThread(() => UpdateFourPointLines());
                 break;
 
             case GestureStatus.Completed:
@@ -535,7 +536,7 @@ public partial class ScanPreviewPage : ContentPage
     {
         if (_imageProcessingService == null || _originalPhoto == null)
         {
-            await DisplayAlert("错误", "服务不可用，无法进行识别", "确定");
+            await DisplayAlert("错误", $"服务状态 - Service: {(_imageProcessingService?.GetType().Name ?? "null")}, Photo: {(_originalPhoto != null ? _originalPhoto.Length + " bytes" : "null")}", "确定");
             return;
         }
 
