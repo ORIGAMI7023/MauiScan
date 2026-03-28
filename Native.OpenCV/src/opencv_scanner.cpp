@@ -29,8 +29,8 @@ static const char* SCANNER_VERSION = "1.0.0";
 // 默认参数
 ScannerParams scanner_get_default_params(void) {
     ScannerParams params;
-    params.canny_threshold1 = 30.0;   // 降低阈值，更容易检测边缘
-    params.canny_threshold2 = 100.0;  // 降低阈值
+    params.canny_threshold1 = 40.0;   // 测试最优参数
+    params.canny_threshold2 = 120.0;  // 测试最优参数
     params.gaussian_kernel_size = 5;
     params.min_contour_area_ratio = 0.05; // 降低最小面积要求
     params.jpeg_quality = 95;
@@ -555,7 +555,7 @@ int32_t scanner_refine_corner(
 
         // 3. Canny 边缘检测（降低阈值，更容易检测边缘）
         Mat edges;
-        Canny(patch, edges, 30, 100, 3);
+        Canny(patch, edges, 40, 120, 3);
 
         // 4. Hough 直线检测（放宽参数）
         std::vector<Vec4i> lines;
