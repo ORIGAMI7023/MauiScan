@@ -199,6 +199,13 @@ public class NativeImageProcessingService : IImageProcessingService
                     return ScanResult.Failure(errorMsg);
                 }
 
+                // 检查输出是否有效
+                if (nativeResult.ImageSize <= 0)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Native] 错误: 输出图像大小为0，可能未成功裁切");
+                    return ScanResult.Failure("未能成功裁切文档区域");
+                }
+
                 // 从非托管内存复制图像数据
                 byte[] resultImageData = new byte[nativeResult.ImageSize];
                 Marshal.Copy(nativeResult.ImageData, resultImageData, 0, nativeResult.ImageSize);
