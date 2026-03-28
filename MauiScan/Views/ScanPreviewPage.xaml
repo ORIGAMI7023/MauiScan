@@ -29,6 +29,12 @@
                 <BoxView x:Name="MaskLeft" BackgroundColor="#00000080"/>
                 <BoxView x:Name="MaskRight" BackgroundColor="#00000080"/>
 
+                <!-- ROI边框（白色线条，便于调试） -->
+                <BoxView x:Name="BorderTop" BackgroundColor="White" HeightRequest="2"/>
+                <BoxView x:Name="BorderBottom" BackgroundColor="White" HeightRequest="2"/>
+                <BoxView x:Name="BorderLeft" BackgroundColor="White" WidthRequest="2"/>
+                <BoxView x:Name="BorderRight" BackgroundColor="White" WidthRequest="2"/>
+
                 <!-- 8个拖拽手柄 -->
                 <!-- 四角 -->
                 <BoxView x:Name="HandleTL" WidthRequest="20" HeightRequest="20" BackgroundColor="White" CornerRadius="10"/>

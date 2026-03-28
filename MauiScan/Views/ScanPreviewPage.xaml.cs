@@ -1,5 +1,6 @@
 using MauiScan.Models;
 using MauiScan.Services;
+using Microsoft.Maui.Layouts;
 
 namespace MauiScan.Views;
 
@@ -21,6 +22,12 @@ public partial class ScanPreviewPage : ContentPage
     // 四点相关
     private (double x, double y)[] _cornerPoints = new (double, double)[4];
     private PanGestureRecognizer?[] _cornerGestures = new PanGestureRecognizer?[4];
+
+    // 手势拖拽的起始位置（用于累积delta）
+    private double _roiHandleDragStartX, _roiHandleDragStartY;
+    private double _cornerPointDragStartX, _cornerPointDragStartY;
+    private int _draggingHandleIndex = -1;
+    private int _draggingCornerIndex = -1;
 
     public event Action<byte[]>? Confirmed;
     public event Action? Retake;
@@ -46,7 +53,6 @@ public partial class ScanPreviewPage : ContentPage
         else
         {
             SetMode(PreviewMode.ROI);
-            InitializeROI();
         }
 
         // 添加手势识别器到8个ROI手柄
@@ -56,6 +62,18 @@ public partial class ScanPreviewPage : ContentPage
         InitializeFourPointGestures();
 
         PreviewImage.SizeChanged += OnPreviewImageSizeChanged;
+    }
+
+    protected override void OnAppearing()
+    {
+        base.OnAppearing();
+
+        // 在页面显示时初始化ROI（此时布局已完成）
+        if (_currentMode == PreviewMode.ROI)
+        {
+            CalculateImageTransform();
+            InitializeROI();
+        }
     }
 
     private void OnPreviewImageSizeChanged(object? sender, EventArgs e)
@@ -76,50 +94,31 @@ public partial class ScanPreviewPage : ContentPage
     /// </summary>
     private void CalculateImageTransform()
     {
-        if (PreviewImage.Source is not StreamImageSource streamSource)
-            return;
-
-        // 获取图片原始尺寸（从内存流）
-        try
-        {
-            var stream = streamSource.Stream.Invoke(CancellationToken.None).Result as MemoryStream;
-            if (stream == null) return;
-
-            stream.Seek(0, SeekOrigin.Begin);
-            var image = new System.IO.MemoryStream(stream.ToArray());
-            // 使用MAUI的Image加载来获取尺寸（简单做法）
-            // 实际上我们可以从SizeAllocated来推算
-        }
-        catch { }
-
-        // 从界面实际尺寸反推
+        // 获取控件尺寸
         double controlW = ImageLayer.Width;
         double controlH = ImageLayer.Height;
 
         if (controlW <= 0 || controlH <= 0)
             return;
 
-        // 根据图片数据估算宽高比（这里需要从MAUI Image获取实际尺寸）
-        // 为简化，我们假设图片已经加载，从Image的ActualWidth/Height推算
-        // 如果不行，就从_imageData字节推算（需要解析JPEG头）
-
-        // 先用一个简单方案：从控件尺寸和AspectFit推算
-        // 实际上更好的方案是在加载图片时就记录宽高
-
-        double nativeW = 1920, nativeH = 1080; // 默认值，应该从图片元数据获取
+        // 从JPEG字节数据中提取宽高
+        double nativeW = 1920, nativeH = 1080; // 默认值
 
         try
         {
-            // 尝试从JPEG字节头读取宽高
             (nativeW, nativeH) = ExtractImageDimensions(_imageData);
         }
         catch { }
 
+        // 计算AspectFit的缩放比例和渲染尺寸
         _imageScale = Math.Min(controlW / nativeW, controlH / nativeH);
         _imageRenderW = nativeW * _imageScale;
         _imageRenderH = nativeH * _imageScale;
         _imageOffsetX = (controlW - _imageRenderW) / 2;
         _imageOffsetY = (controlH - _imageRenderH) / 2;
+
+        System.Diagnostics.Debug.WriteLine($"Image Transform: controlW={controlW}, controlH={controlH}, nativeW={nativeW}, nativeH={nativeH}, scale={_imageScale}");
+        System.Diagnostics.Debug.WriteLine($"Render: w={_imageRenderW}, h={_imageRenderH}, offsetX={_imageOffsetX}, offsetY={_imageOffsetY}");
     }
 
     /// <summary>
@@ -177,12 +176,18 @@ public partial class ScanPreviewPage : ContentPage
     /// </summary>
     private void InitializeROI()
     {
-        CalculateImageTransform();
+        // 确保已经计算过图片变换
+        if (_imageRenderW <= 0)
+        {
+            CalculateImageTransform();
+        }
 
         _roiW = _imageRenderW * 0.8;
         _roiH = _roiW / 1.5; // 3:2比例
         _roiX = _imageOffsetX + (_imageRenderW - _roiW) / 2;
         _roiY = _imageOffsetY + (_imageRenderH - _roiH) / 2;
+
+        System.Diagnostics.Debug.WriteLine($"ROI Initialize: roiW={_roiW}, roiH={_roiH}, roiX={_roiX}, roiY={_roiY}");
 
         UpdateROIHandles();
     }
@@ -212,9 +217,29 @@ public partial class ScanPreviewPage : ContentPage
     {
         // 四个遮罩
         AbsoluteLayout.SetLayoutBounds(MaskTop, new Rect(_imageOffsetX, _imageOffsetY, _imageRenderW, _roiY - _imageOffsetY));
+        AbsoluteLayout.SetLayoutFlags(MaskTop, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(MaskBottom, new Rect(_imageOffsetX, _roiY + _roiH, _imageRenderW, ImageLayer.Height - (_roiY + _roiH)));
+        AbsoluteLayout.SetLayoutFlags(MaskBottom, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(MaskLeft, new Rect(_imageOffsetX, _roiY, _roiX - _imageOffsetX, _roiH));
+        AbsoluteLayout.SetLayoutFlags(MaskLeft, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(MaskRight, new Rect(_roiX + _roiW, _roiY, (ImageLayer.Width - (_roiX + _roiW)), _roiH));
+        AbsoluteLayout.SetLayoutFlags(MaskRight, AbsoluteLayoutFlags.None);
+
+        // ROI边框（4条白色线）
+        AbsoluteLayout.SetLayoutBounds(BorderTop, new Rect(_roiX, _roiY, _roiW, 2));
+        AbsoluteLayout.SetLayoutFlags(BorderTop, AbsoluteLayoutFlags.None);
+
+        AbsoluteLayout.SetLayoutBounds(BorderBottom, new Rect(_roiX, _roiY + _roiH - 2, _roiW, 2));
+        AbsoluteLayout.SetLayoutFlags(BorderBottom, AbsoluteLayoutFlags.None);
+
+        AbsoluteLayout.SetLayoutBounds(BorderLeft, new Rect(_roiX, _roiY, 2, _roiH));
+        AbsoluteLayout.SetLayoutFlags(BorderLeft, AbsoluteLayoutFlags.None);
+
+        AbsoluteLayout.SetLayoutBounds(BorderRight, new Rect(_roiX + _roiW - 2, _roiY, 2, _roiH));
+        AbsoluteLayout.SetLayoutFlags(BorderRight, AbsoluteLayoutFlags.None);
 
         // 四个角手柄
         UpdateHandle(HandleTL, _roiX - 10, _roiY - 10);
@@ -227,11 +252,14 @@ public partial class ScanPreviewPage : ContentPage
         UpdateHandle(HandleB, _roiX + _roiW / 2 - 10, _roiY + _roiH - 10);
         UpdateHandle(HandleL, _roiX - 10, _roiY + _roiH / 2 - 10);
         UpdateHandle(HandleR, _roiX + _roiW - 10, _roiY + _roiH / 2 - 10);
+
+        System.Diagnostics.Debug.WriteLine($"UpdateROIHandles: roiX={_roiX}, roiY={_roiY}, roiW={_roiW}, roiH={_roiH}");
     }
 
     private void UpdateHandle(BoxView handle, double x, double y)
     {
         AbsoluteLayout.SetLayoutBounds(handle, new Rect(x, y, 20, 20));
+        AbsoluteLayout.SetLayoutFlags(handle, AbsoluteLayoutFlags.None);
     }
 
     /// <summary>
@@ -252,9 +280,16 @@ public partial class ScanPreviewPage : ContentPage
 
         // 更新点位置
         AbsoluteLayout.SetLayoutBounds(PointTL, new Rect(tl_sx - 15, tl_sy - 15, 30, 30));
+        AbsoluteLayout.SetLayoutFlags(PointTL, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(PointTR, new Rect(tr_sx - 15, tr_sy - 15, 30, 30));
+        AbsoluteLayout.SetLayoutFlags(PointTR, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(PointBR, new Rect(br_sx - 15, br_sy - 15, 30, 30));
+        AbsoluteLayout.SetLayoutFlags(PointBR, AbsoluteLayoutFlags.None);
+
         AbsoluteLayout.SetLayoutBounds(PointBL, new Rect(bl_sx - 15, bl_sy - 15, 30, 30));
+        AbsoluteLayout.SetLayoutFlags(PointBL, AbsoluteLayoutFlags.None);
     }
 
     private void DrawLine(BoxView line, double x1, double y1, double x2, double y2)
@@ -270,6 +305,7 @@ public partial class ScanPreviewPage : ContentPage
         double centerY = (y1 + y2) / 2 - 1;
 
         AbsoluteLayout.SetLayoutBounds(line, new Rect(centerX, centerY, length, 2));
+        AbsoluteLayout.SetLayoutFlags(line, AbsoluteLayoutFlags.None);
     }
 
     private void InitializeROIGestures()
@@ -278,7 +314,8 @@ public partial class ScanPreviewPage : ContentPage
         for (int i = 0; i < handles.Length; i++)
         {
             var gesture = new PanGestureRecognizer();
-            gesture.PanUpdated += (s, e) => OnROIHandlePan(i, e);
+            int index = i; // closure capture by value
+            gesture.PanUpdated += (s, e) => OnROIHandlePan(index, e);
             handles[i].GestureRecognizers.Add(gesture);
         }
     }
@@ -298,70 +335,110 @@ public partial class ScanPreviewPage : ContentPage
 
     private void OnROIHandlePan(int handleIndex, PanUpdatedEventArgs e)
     {
-        if (e.StatusType != GestureStatus.Running)
-            return;
-
-        double deltaX = e.TotalX;
-        double deltaY = e.TotalY;
-
-        // 简化处理：所有手柄都可以调整框的大小
-        switch (handleIndex)
+        switch (e.StatusType)
         {
-            case 0: // TL
-                _roiX += deltaX;
-                _roiY += deltaY;
-                _roiW -= deltaX;
-                _roiH -= deltaY;
+            case GestureStatus.Started:
+                _draggingHandleIndex = handleIndex;
+                _roiHandleDragStartX = _roiX;
+                _roiHandleDragStartY = _roiY;
                 break;
-            case 1: // TR
-                _roiY += deltaY;
-                _roiW += deltaX;
-                _roiH -= deltaY;
+
+            case GestureStatus.Running:
+                if (_draggingHandleIndex != handleIndex) return;
+
+                double deltaX = e.TotalX;
+                double deltaY = e.TotalY;
+
+                // 恢复初始状态，然后应用delta
+                _roiX = _roiHandleDragStartX;
+                _roiY = _roiHandleDragStartY;
+                double newRoiW = _roiW;
+                double newRoiH = _roiH;
+
+                // 应用拖拽改变
+                switch (handleIndex)
+                {
+                    case 0: // TL
+                        _roiX += deltaX;
+                        _roiY += deltaY;
+                        newRoiW -= deltaX;
+                        newRoiH -= deltaY;
+                        break;
+                    case 1: // TR
+                        _roiY += deltaY;
+                        newRoiW += deltaX;
+                        newRoiH -= deltaY;
+                        break;
+                    case 2: // BL
+                        _roiX += deltaX;
+                        newRoiW -= deltaX;
+                        newRoiH += deltaY;
+                        break;
+                    case 3: // BR
+                        newRoiW += deltaX;
+                        newRoiH += deltaY;
+                        break;
+                    case 4: // T
+                        _roiY += deltaY;
+                        newRoiH -= deltaY;
+                        break;
+                    case 5: // B
+                        newRoiH += deltaY;
+                        break;
+                    case 6: // L
+                        _roiX += deltaX;
+                        newRoiW -= deltaX;
+                        break;
+                    case 7: // R
+                        newRoiW += deltaX;
+                        break;
+                }
+
+                // 约束最小尺寸
+                if (newRoiW >= 100) _roiW = newRoiW;
+                if (newRoiH >= 100) _roiH = newRoiH;
+
+                UpdateROIHandles();
                 break;
-            case 2: // BL
-                _roiX += deltaX;
-                _roiW -= deltaX;
-                _roiH += deltaY;
-                break;
-            case 3: // BR
-                _roiW += deltaX;
-                _roiH += deltaY;
-                break;
-            case 4: // T（上边中点）
-                _roiY += deltaY;
-                _roiH -= deltaY;
-                break;
-            case 5: // B（下边中点）
-                _roiH += deltaY;
-                break;
-            case 6: // L（左边中点）
-                _roiX += deltaX;
-                _roiW -= deltaX;
-                break;
-            case 7: // R（右边中点）
-                _roiW += deltaX;
+
+            case GestureStatus.Completed:
+            case GestureStatus.Canceled:
+                _draggingHandleIndex = -1;
                 break;
         }
-
-        // 约束框的最小尺寸
-        if (_roiW < 100) _roiW = 100;
-        if (_roiH < 100) _roiH = 100;
-
-        UpdateROIHandles();
     }
 
     private void OnFourPointPan(int pointIndex, PanUpdatedEventArgs e)
     {
-        if (e.StatusType != GestureStatus.Running)
-            return;
+        switch (e.StatusType)
+        {
+            case GestureStatus.Started:
+                _draggingCornerIndex = pointIndex;
+                _cornerPointDragStartX = _cornerPoints[pointIndex].x;
+                _cornerPointDragStartY = _cornerPoints[pointIndex].y;
+                break;
 
-        double deltaX = e.TotalX;
-        double deltaY = e.TotalY;
+            case GestureStatus.Running:
+                if (_draggingCornerIndex != pointIndex)
+                    return;
 
-        var (pixelX, pixelY) = ScreenToImagePixel(_cornerPoints[pointIndex].x + deltaX, _cornerPoints[pointIndex].y + deltaY);
-        _cornerPoints[pointIndex] = (pixelX, pixelY);
+                double deltaX = e.TotalX;
+                double deltaY = e.TotalY;
 
-        UpdateFourPointLines();
+                // 从屏幕坐标转换为像素坐标（当前屏幕位置 = 起始屏幕位置 + delta）
+                var (startScreenX, startScreenY) = ImagePixelToScreen(_cornerPointDragStartX, _cornerPointDragStartY);
+                var (currentScreenX, currentScreenY) = (startScreenX + deltaX, startScreenY + deltaY);
+                var (pixelX, pixelY) = ScreenToImagePixel(currentScreenX, currentScreenY);
+
+                _cornerPoints[pointIndex] = (pixelX, pixelY);
+                UpdateFourPointLines();
+                break;
+
+            case GestureStatus.Completed:
+            case GestureStatus.Canceled:
+                _draggingCornerIndex = -1;
+                break;
+        }
     }
 
     private async void OnRotateLeftClicked(object sender, EventArgs e)
@@ -444,7 +521,10 @@ public partial class ScanPreviewPage : ContentPage
     private async void OnROIDetectClicked(object sender, EventArgs e)
     {
         if (_imageProcessingService == null || _originalPhoto == null)
+        {
+            await DisplayAlert("错误", "服务不可用，无法进行识别", "确定");
             return;
+        }
 
         try
         {
@@ -487,7 +567,10 @@ public partial class ScanPreviewPage : ContentPage
     private async void OnFourPointApplyClicked(object sender, EventArgs e)
     {
         if (_imageProcessingService == null || _originalPhoto == null)
+        {
+            await DisplayAlert("错误", "服务不可用，无法进行裁切", "确定");
             return;
+        }
 
         try
         {
