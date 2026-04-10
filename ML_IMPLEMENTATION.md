@@ -30,8 +30,6 @@ MauiScan/
 │   └── README.md                              # 使用文档
 │
 ├── MauiScan.ML.Training/              # ✅ Python 训练环境（新增）
-│   ├── dataset/
-│   │   └── prepare_data.py                    # 数据加载脚本
 │   ├── models/
 │   │   ├── corner_detector.py                 # 模型定义
 │   │   └── export_onnx.py                     # ONNX 导出
@@ -40,8 +38,12 @@ MauiScan/
 │   ├── requirements.txt                       # Python 依赖
 │   └── README.md                              # 训练文档
 │
-├── AnnotationTool/                    # ✅ 标注工具（已完成）
+├── AnnotationTool/                    # ✅ 标注工具 + 训练脚本（已完成）
 │   ├── Form1.cs                               # 主窗体
+│   ├── train.py                               # 训练主脚本
+│   ├── data_augmentation.py                   # 数据增强
+│   ├── test_homography.py                     # 单应性变换测试
+│   ├── visualize_model.py                     # 模型可视化
 │   ├── data/                                  # 标注数据（.gitignore）
 │   └── README.md                              # 使用说明
 │
@@ -109,7 +111,8 @@ MauiScan/
 ### 2. Python 训练环境
 
 #### 数据处理
-- ✅ `prepare_data.py` - 数据加载脚本
+- ✅ `data_augmentation.py` - 数据增强脚本（在 AnnotationTool 中）
+- ✅ `prepare_data.py` - 数据加载脚本（在 AnnotationTool 中）
   - 加载 AnnotationTool 生成的 JSON
   - 数据验证和统计
   - 训练集/验证集划分
@@ -167,8 +170,8 @@ MauiScan/
   - 1-2% 边界外角点样本
 
 #### 2. 模型训练
-- [ ] 实现 `train.py` 训练主脚本
-- [ ] 实现数据增强 (`augmentation.py`)
+- [x] 实现 `train.py` 训练主脚本（在 AnnotationTool 中）
+- [x] 实现数据增强 (`data_augmentation.py`)
 - [ ] 训练初版模型（50-100 epochs）
 - [ ] 评估模型准确率
 
@@ -259,13 +262,13 @@ MauiScan/
 2. 使用 AnnotationTool 标注
    ↓
 3. 准备训练数据
-   python dataset/prepare_data.py ../data
+   python AnnotationTool/data_augmentation.py
    ↓
 4. 训练模型
-   python train.py --data-root ../data
+   python AnnotationTool/train.py
    ↓
 5. 导出 ONNX
-   python models/export_onnx.py checkpoints/best_model.pth
+   python MauiScan.ML.Training/models/export_onnx.py checkpoints/best_model.pth
    ↓
 6. 集成到 MauiScan
    复制 ppt_corner_detector.onnx 到 Resources/Raw/
@@ -300,10 +303,11 @@ pip install -r requirements.txt
 python models/corner_detector.py  # 测试模型
 ```
 
-### 2. 验证数据加载
+### 2. 验证训练脚本
 
 ```bash
-python dataset/prepare_data.py ../data
+cd AnnotationTool
+python train.py --help
 ```
 
 ### 3. 准备标注数据
@@ -312,7 +316,10 @@ python dataset/prepare_data.py ../data
 
 ### 4. 开始训练
 
-（待实现 `train.py`）
+```bash
+cd AnnotationTool
+python train.py
+```
 
 ## 📚 相关文档
 
@@ -334,7 +341,6 @@ python dataset/prepare_data.py ../data
 
 **下一步**：
 - ⏳ 数据收集（300-500 张）
-- ⏳ 实现训练脚本
 - ⏳ 训练初版模型
 - ⏳ 集成测试
 

@@ -87,18 +87,16 @@ MauiScan/
 │   └── ios/                       # iOS构建
 │       └── build-ios.sh
 │
-├── AnnotationTool/                # 标注工具
-│   └── data/                      # 240张标注数据
+├── AnnotationTool/                # 标注工具 + 训练脚本
+│   ├── data/                      # 240张标注数据
+│   ├── train.py                   # 训练主脚本
+│   ├── data_augmentation.py       # 数据增强
+│   ├── test_homography.py         # 单应性变换测试
+│   └── visualize_model.py         # 模型可视化
 │
-├── scripts/                       # 测试脚本
-│   ├── test_preprocessing_methods.py      # 30方法测试
-│   ├── test_combination_methods.py        # 91组合测试
-│   └── analyze_preprocessing_results.py   # 结果分析
-│
-└── docs/
-    ├── CV预处理优化计划.md        # CV优化完整方案
-    ├── CV精修优化方案.md          # CV精修分析
-    └── ML_IMPLEMENTATION.md       # ML实现文档
+├── CV预处理优化计划.md            # CV优化完整方案
+├── CV精修优化方案.md              # CV精修分析
+└── ML_IMPLEMENTATION.md           # ML实现文档
 ```
 
 ---
@@ -198,23 +196,11 @@ dotnet build -f net10.0-ios
 
 ## 🛠️ 开发工具
 
-### Python脚本
-- `test_preprocessing_methods.py` - 30种预处理方法测试
-- `test_combination_methods.py` - 91种组合方案测试
-- `analyze_preprocessing_results.py` - 结果分析和可视化
-- `cv_debug_visualizer.py` - CV调试可视化工具
-
-### 使用示例
-```bash
-# 测试预处理方法
-python test_preprocessing_methods.py
-
-# 测试组合方案
-python test_combination_methods.py
-
-# 分析结果
-python analyze_preprocessing_results.py
-```
+### AnnotationTool 训练脚本
+- `AnnotationTool/train.py` - 模型训练主脚本
+- `AnnotationTool/data_augmentation.py` - 数据增强
+- `AnnotationTool/test_homography.py` - 单应性变换测试
+- `AnnotationTool/visualize_model.py` - 模型可视化
 
 ---
 
