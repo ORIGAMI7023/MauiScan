@@ -24,18 +24,10 @@ public partial class ScanPreviewPage : ContentPage
 
     // 四点相关
     private (double x, double y)[] _cornerPoints = new (double, double)[4];
-    private PanGestureRecognizer?[] _cornerGestures = new PanGestureRecognizer?[4];
 
-    // 手势拖拽的起始位置（用于累积delta）
-    private double _roiHandleDragStartX, _roiHandleDragStartY;
-    private double _roiDragStartRoiX, _roiDragStartRoiY, _roiDragStartRoiW, _roiDragStartRoiH;
-    private double _cornerPointDragStartX, _cornerPointDragStartY;
-    private int _draggingHandleIndex = -1;
-    private int _draggingCornerIndex = -1;
-
-    // 用于减少UI更新频率
-    private bool _pendingROIUpdate = false;
-    private bool _pendingFourPointUpdate = false;
+    // 手势拖拽状态
+    private int _draggingHandleIndex = -1;   // 当前拖动的ROI手柄索引（-1=空闲）
+    private int _draggingCornerIndex = -1;   // 当前拖动的四点角点索引（-1=空闲）
 
     public event Action<byte[]>? Confirmed;
     public event Action? Retake;
@@ -63,11 +55,9 @@ public partial class ScanPreviewPage : ContentPage
             SetMode(PreviewMode.ROI);
         }
 
-        // 添加手势识别器到8个ROI手柄
-        InitializeROIGestures();
-
-        // 添加手势识别器到4个四点角点
-        InitializeFourPointGestures();
+        // 在背景层上绑定统一的Pan手势（避免在移动的子View上绑定导致TotalX/Y跳变）
+        InitializeROILayerGesture();
+        InitializeFourPointLayerGesture();
 
         PreviewImage.SizeChanged += OnPreviewImageSizeChanged;
     }
@@ -248,17 +238,26 @@ public partial class ScanPreviewPage : ContentPage
     /// </summary>
     private void UpdateROIHandles()
     {
-        // 四个遮罩
-        AbsoluteLayout.SetLayoutBounds(MaskTop, new Rect(_imageOffsetX, _imageOffsetY, _imageRenderW, _roiY - _imageOffsetY));
+        double layerW = ImageLayer.Width;
+        double layerH = ImageLayer.Height;
+
+        // 四个遮罩（clamp尺寸避免负值导致不可见）
+        double maskTopH = Math.Max(0, _roiY);
+        AbsoluteLayout.SetLayoutBounds(MaskTop, new Rect(0, 0, layerW, maskTopH));
         AbsoluteLayout.SetLayoutFlags(MaskTop, AbsoluteLayoutFlags.None);
 
-        AbsoluteLayout.SetLayoutBounds(MaskBottom, new Rect(_imageOffsetX, _roiY + _roiH, _imageRenderW, ImageLayer.Height - (_roiY + _roiH)));
+        double maskBottomY = _roiY + _roiH;
+        double maskBottomH = Math.Max(0, layerH - maskBottomY);
+        AbsoluteLayout.SetLayoutBounds(MaskBottom, new Rect(0, maskBottomY, layerW, maskBottomH));
         AbsoluteLayout.SetLayoutFlags(MaskBottom, AbsoluteLayoutFlags.None);
 
-        AbsoluteLayout.SetLayoutBounds(MaskLeft, new Rect(_imageOffsetX, _roiY, _roiX - _imageOffsetX, _roiH));
+        double maskLeftW = Math.Max(0, _roiX);
+        AbsoluteLayout.SetLayoutBounds(MaskLeft, new Rect(0, _roiY, maskLeftW, _roiH));
         AbsoluteLayout.SetLayoutFlags(MaskLeft, AbsoluteLayoutFlags.None);
 
-        AbsoluteLayout.SetLayoutBounds(MaskRight, new Rect(_roiX + _roiW, _roiY, (ImageLayer.Width - (_roiX + _roiW)), _roiH));
+        double maskRightX = _roiX + _roiW;
+        double maskRightW = Math.Max(0, layerW - maskRightX);
+        AbsoluteLayout.SetLayoutBounds(MaskRight, new Rect(maskRightX, _roiY, maskRightW, _roiH));
         AbsoluteLayout.SetLayoutFlags(MaskRight, AbsoluteLayoutFlags.None);
 
         // ROI边框（4条白色线）
@@ -341,161 +340,121 @@ public partial class ScanPreviewPage : ContentPage
         AbsoluteLayout.SetLayoutFlags(line, AbsoluteLayoutFlags.None);
     }
 
-    private void InitializeROIGestures()
+    /// <summary>
+    /// 在ROILayer背景层绑定Pan手势，避免在移动的手柄View上绑定导致Android TotalX/Y跳变。
+    /// 同时绑定PointerGestureRecognizer以在Pressed时获取精确触摸坐标，用于命中检测。
+    /// </summary>
+    private void InitializeROILayerGesture()
     {
+        // 每个手柄绑完整的 Pan 处理（Started+Running+Completed 全在手柄自身处理）
+        // 用增量模式（每帧 delta = 本帧Total - 上帧Total）避免手柄移动导致的 TotalX/Y 跳变
         var handles = new[] { HandleTL, HandleTR, HandleBL, HandleBR, HandleT, HandleB, HandleL, HandleR };
         for (int i = 0; i < handles.Length; i++)
         {
-            var gesture = new PanGestureRecognizer();
-            int index = i; // closure capture by value
-            gesture.PanUpdated += (s, e) => OnROIHandlePan(index, e);
-            handles[i].GestureRecognizers.Add(gesture);
+            int index = i;
+            handles[i].InputTransparent = false;
+            double lastTotalX = 0, lastTotalY = 0;
+            var handlePan = new PanGestureRecognizer();
+            handlePan.PanUpdated += (s, args) =>
+            {
+                switch (args.StatusType)
+                {
+                    case GestureStatus.Started:
+                        if (_draggingHandleIndex != -1) return;
+                        _draggingHandleIndex = index;
+                        lastTotalX = 0;
+                        lastTotalY = 0;
+                        System.Diagnostics.Debug.WriteLine($"[Handle Pan] Started index={index}");
+                        break;
+                    case GestureStatus.Running:
+                        if (_draggingHandleIndex != index) return;
+                        double dX = args.TotalX - lastTotalX;
+                        double dY = args.TotalY - lastTotalY;
+                        lastTotalX = args.TotalX;
+                        lastTotalY = args.TotalY;
+                        ApplyROIHandleDelta(index, dX, dY);
+                        break;
+                    case GestureStatus.Completed:
+                    case GestureStatus.Canceled:
+                        if (_draggingHandleIndex == index)
+                            _draggingHandleIndex = -1;
+                        break;
+                }
+            };
+            handles[i].GestureRecognizers.Add(handlePan);
         }
     }
 
-    private void InitializeFourPointGestures()
+    private void InitializeFourPointLayerGesture()
     {
-        var points = new[] { PointTL, PointTR, PointBR, PointBL };
+        // 每个角点绑完整的 Pan，增量模式
+        var points = new View[] { PointTL, PointTR, PointBR, PointBL };
         for (int i = 0; i < points.Length; i++)
         {
-            var gesture = new PanGestureRecognizer();
-            int index = i; // 闭包捕获
-            gesture.PanUpdated += (s, e) => OnFourPointPan(index, e);
-            points[i].GestureRecognizers.Add(gesture);
-            _cornerGestures[i] = gesture;
-        }
-    }
-
-    private void OnROIHandlePan(int handleIndex, PanUpdatedEventArgs e)
-    {
-        switch (e.StatusType)
-        {
-            case GestureStatus.Started:
-                _draggingHandleIndex = handleIndex;
-                // 保存拖拽开始时的完整ROI状态
-                _roiDragStartRoiX = _roiX;
-                _roiDragStartRoiY = _roiY;
-                _roiDragStartRoiW = _roiW;
-                _roiDragStartRoiH = _roiH;
-                break;
-
-            case GestureStatus.Running:
-                if (_draggingHandleIndex != handleIndex) return;
-
-                double deltaX = e.TotalX;
-                double deltaY = e.TotalY;
-
-                // 从起始状态恢复，然后应用delta
-                _roiX = _roiDragStartRoiX;
-                _roiY = _roiDragStartRoiY;
-                _roiW = _roiDragStartRoiW;
-                _roiH = _roiDragStartRoiH;
-                double newRoiW = _roiW;
-                double newRoiH = _roiH;
-
-                // 应用拖拽改变
-                switch (handleIndex)
+            int index = i;
+            points[i].InputTransparent = false;
+            double lastTotalX = 0, lastTotalY = 0;
+            var pointPan = new PanGestureRecognizer();
+            pointPan.PanUpdated += (s, args) =>
+            {
+                switch (args.StatusType)
                 {
-                    case 0: // TL
-                        _roiX += deltaX;
-                        _roiY += deltaY;
-                        newRoiW -= deltaX;
-                        newRoiH -= deltaY;
+                    case GestureStatus.Started:
+                        if (_draggingCornerIndex != -1) return;
+                        _draggingCornerIndex = index;
+                        lastTotalX = 0;
+                        lastTotalY = 0;
+                        System.Diagnostics.Debug.WriteLine($"[Corner Pan] Started index={index}");
                         break;
-                    case 1: // TR
-                        _roiY += deltaY;
-                        newRoiW += deltaX;
-                        newRoiH -= deltaY;
-                        break;
-                    case 2: // BL
-                        _roiX += deltaX;
-                        newRoiW -= deltaX;
-                        newRoiH += deltaY;
-                        break;
-                    case 3: // BR
-                        newRoiW += deltaX;
-                        newRoiH += deltaY;
-                        break;
-                    case 4: // T
-                        _roiY += deltaY;
-                        newRoiH -= deltaY;
-                        break;
-                    case 5: // B
-                        newRoiH += deltaY;
-                        break;
-                    case 6: // L
-                        _roiX += deltaX;
-                        newRoiW -= deltaX;
-                        break;
-                    case 7: // R
-                        newRoiW += deltaX;
-                        break;
-                }
-
-                // 约束最小尺寸
-                if (newRoiW >= 100) _roiW = newRoiW;
-                if (newRoiH >= 100) _roiH = newRoiH;
-
-                // 标记需要更新，避免频繁重绘
-                if (!_pendingROIUpdate)
-                {
-                    _pendingROIUpdate = true;
-                    MainThread.BeginInvokeOnMainThread(() =>
-                    {
-                        UpdateROIHandles();
-                        _pendingROIUpdate = false;
-                    });
-                }
-                break;
-
-            case GestureStatus.Completed:
-            case GestureStatus.Canceled:
-                _draggingHandleIndex = -1;
-                break;
-        }
-    }
-
-    private void OnFourPointPan(int pointIndex, PanUpdatedEventArgs e)
-    {
-        switch (e.StatusType)
-        {
-            case GestureStatus.Started:
-                _draggingCornerIndex = pointIndex;
-                _cornerPointDragStartX = _cornerPoints[pointIndex].x;
-                _cornerPointDragStartY = _cornerPoints[pointIndex].y;
-                break;
-
-            case GestureStatus.Running:
-                if (_draggingCornerIndex != pointIndex)
-                    return;
-
-                double deltaX = e.TotalX;
-                double deltaY = e.TotalY;
-
-                // 从屏幕坐标转换为像素坐标（当前屏幕位置 = 起始屏幕位置 + delta）
-                var (startScreenX, startScreenY) = ImagePixelToScreen(_cornerPointDragStartX, _cornerPointDragStartY);
-                var (currentScreenX, currentScreenY) = (startScreenX + deltaX, startScreenY + deltaY);
-                var (pixelX, pixelY) = ScreenToImagePixel(currentScreenX, currentScreenY);
-
-                _cornerPoints[pointIndex] = (pixelX, pixelY);
-
-                // 标记需要更新，避免频繁重绘
-                if (!_pendingFourPointUpdate)
-                {
-                    _pendingFourPointUpdate = true;
-                    MainThread.BeginInvokeOnMainThread(() =>
-                    {
+                    case GestureStatus.Running:
+                        if (_draggingCornerIndex != index) return;
+                        double dX = args.TotalX - lastTotalX;
+                        double dY = args.TotalY - lastTotalY;
+                        lastTotalX = args.TotalX;
+                        lastTotalY = args.TotalY;
+                        var (sx, sy) = ImagePixelToScreen(_cornerPoints[index].x, _cornerPoints[index].y);
+                        var (px, py) = ScreenToImagePixel(sx + dX, sy + dY);
+                        _cornerPoints[index] = (px, py);
                         UpdateFourPointLines();
-                        _pendingFourPointUpdate = false;
-                    });
+                        break;
+                    case GestureStatus.Completed:
+                    case GestureStatus.Canceled:
+                        if (_draggingCornerIndex == index)
+                            _draggingCornerIndex = -1;
+                        break;
                 }
-                break;
-
-            case GestureStatus.Completed:
-            case GestureStatus.Canceled:
-                _draggingCornerIndex = -1;
-                break;
+            };
+            points[i].GestureRecognizers.Add(pointPan);
         }
+    }
+
+    /// <summary>
+    /// 根据增量 dX/dY 更新 ROI（增量模式，不依赖 TotalX/Y 的绝对值）
+    /// </summary>
+    private void ApplyROIHandleDelta(int handleIndex, double dX, double dY)
+    {
+        double newX = _roiX, newY = _roiY, newW = _roiW, newH = _roiH;
+
+        switch (handleIndex)
+        {
+            case 0: newX += dX; newY += dY; newW -= dX; newH -= dY; break; // TL
+            case 1: newY += dY; newW += dX; newH -= dY; break;             // TR
+            case 2: newX += dX; newW -= dX; newH += dY; break;             // BL
+            case 3: newW += dX; newH += dY; break;                         // BR
+            case 4: newY += dY; newH -= dY; break;                         // T
+            case 5: newH += dY; break;                                     // B
+            case 6: newX += dX; newW -= dX; break;                         // L
+            case 7: newW += dX; break;                                     // R
+        }
+
+        if (newW >= 50 && newH >= 50)
+            { _roiX = newX; _roiY = newY; _roiW = newW; _roiH = newH; }
+        else if (newW >= 50)
+            { _roiX = newX; _roiW = newW; }
+        else if (newH >= 50)
+            { _roiY = newY; _roiH = newH; }
+
+        UpdateROIHandles();
     }
 
     private async void OnRotateLeftClicked(object sender, EventArgs e)

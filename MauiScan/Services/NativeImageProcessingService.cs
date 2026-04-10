@@ -206,21 +206,25 @@ public class NativeImageProcessingService : IImageProcessingService
                     return ScanResult.Failure("未能成功裁切文档区域");
                 }
 
+                // 在 free 之前先把需要的值复制出来
+                int resultWidth = nativeResult.Width;
+                int resultHeight = nativeResult.Height;
+                int resultSize = nativeResult.ImageSize;
+                var quad = ConvertToManagedQuad(nativeResult.Quad);
+
                 // 从非托管内存复制图像数据
-                byte[] resultImageData = new byte[nativeResult.ImageSize];
-                Marshal.Copy(nativeResult.ImageData, resultImageData, 0, nativeResult.ImageSize);
+                byte[] resultImageData = new byte[resultSize];
+                Marshal.Copy(nativeResult.ImageData, resultImageData, 0, resultSize);
 
                 // 释放 Native 内存
                 scanner_free_result(ref nativeResult);
 
-                var quad = ConvertToManagedQuad(nativeResult.Quad);
-
-                System.Diagnostics.Debug.WriteLine($"[Native] 成功处理，输出大小: {nativeResult.ImageSize} 字节");
+                System.Diagnostics.Debug.WriteLine($"[Native] 成功处理，输出大小: {resultSize} 字节, {resultWidth}x{resultHeight}");
 
                 return new ScanResult(
                     resultImageData,
-                    nativeResult.Width,
-                    nativeResult.Height,
+                    resultWidth,
+                    resultHeight,
                     quad
                 );
             }
@@ -368,19 +372,23 @@ public class NativeImageProcessingService : IImageProcessingService
                 return ScanResult.Failure(errorMsg);
             }
 
+            // 在 free 之前先把需要的值复制出来
+            int resultWidth = nativeResult.Width;
+            int resultHeight = nativeResult.Height;
+            int resultSize = nativeResult.ImageSize;
+            var quad = ConvertToManagedQuad(nativeResult.Quad);
+
             // 从非托管内存复制图像数据
-            byte[] resultImageData = new byte[nativeResult.ImageSize];
-            Marshal.Copy(nativeResult.ImageData, resultImageData, 0, nativeResult.ImageSize);
+            byte[] resultImageData = new byte[resultSize];
+            Marshal.Copy(nativeResult.ImageData, resultImageData, 0, resultSize);
 
             // 释放 Native 内存
             scanner_free_result(ref nativeResult);
 
-            var quad = ConvertToManagedQuad(nativeResult.Quad);
-
             return new ScanResult(
                 resultImageData,
-                nativeResult.Width,
-                nativeResult.Height,
+                resultWidth,
+                resultHeight,
                 quad
             );
         }
