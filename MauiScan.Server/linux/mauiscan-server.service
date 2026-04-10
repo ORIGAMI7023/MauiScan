@@ -12,7 +12,7 @@ ExecStart=/usr/bin/dotnet /var/www/mauiscan-server/MauiScan.Server.dll
 Restart=always
 RestartSec=5
 SyslogIdentifier=mauiscan-server
-User=root
+User=origami
 Environment="ASPNETCORE_ENVIRONMENT=Production"
 Environment="ASPNETCORE_URLS=http://127.0.0.1:5012"
 Environment="DOTNET_PRINT_TELEMETRY_MESSAGE=false"

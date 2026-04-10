@@ -143,6 +143,30 @@ public class ScansController : ControllerBase
     }
 
     /// <summary>
+    /// 下载缩略图
+    /// </summary>
+    [HttpGet("{fileName}/thumbnail")]
+    public async Task<IActionResult> GetThumbnail(string fileName)
+    {
+        try
+        {
+            var result = await _fileStorage.GetThumbnailAsync(fileName);
+
+            if (result == null)
+            {
+                return NotFound();
+            }
+
+            return File(result.Value.fileData, result.Value.contentType, $"thumb_{fileName}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"获取缩略图时发生错误: {fileName}");
+            return StatusCode(500);
+        }
+    }
+
+    /// <summary>
     /// 删除扫描图片
     /// </summary>
     [HttpDelete("{fileName}")]

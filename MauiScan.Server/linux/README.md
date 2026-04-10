@@ -16,13 +16,13 @@ cd D:\Programing\C#\MauiScan
 
 ```bash
 # 查看服务状态
-ssh root@origami7023.net.cn 'systemctl status mauiscan-server'
+ssh origami@origami7023.net.cn 'sudo systemctl status mauiscan-server'
 
 # 查看实时日志
-ssh root@origami7023.net.cn 'journalctl -u mauiscan-server -f'
+ssh origami@origami7023.net.cn 'sudo journalctl -u mauiscan-server -f'
 
 # 重启服务
-ssh root@origami7023.net.cn 'systemctl restart mauiscan-server'
+ssh origami@origami7023.net.cn 'sudo systemctl restart mauiscan-server'
 ```
 
 ## 文件位置

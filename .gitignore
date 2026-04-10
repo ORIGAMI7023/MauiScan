@@ -105,6 +105,12 @@ data/
 AnnotationTool/bin/
 AnnotationTool/obj/
 AnnotationTool/data_augmented/
+AnnotationTool/data/
+AnnotationTool/training_data/
+AnnotationTool/test_homography/
+AnnotationTool/test_results/
+AnnotationTool/visualization/
+AnnotationTool/*.pth
 
 # ML Training artifacts (large files - 排除所有训练相关图片和模型)
 MauiScan.ML.Training/checkpoints/
@@ -126,3 +132,9 @@ MauiScan.ML.Training/*.jpeg
 MauiScan.ML.Test/
 /cv_debug_output
 /preprocessing_results
+
+# 同步配置文件（包含敏感 API Key，不提交）
+sync_config.json
+
+# 服务器配置文件（包含敏感 API Key，不提交）
+MauiScan.Server/appsettings.json

@@ -7,7 +7,24 @@ public partial class Form1 : Form
     private List<string> imageFiles = new();
     private int currentIndex = -1;
     private Image? currentImage;
-    private List<Point> corners = new();
+
+    // 双模式角点存储
+    private Dictionary<AnnotationMode, List<Point>> allCorners = new()
+    {
+        [AnnotationMode.PptBorder] = new List<Point>(),
+        [AnnotationMode.ScreenEdge] = new List<Point>()
+    };
+
+    // 当前选中的模式
+    private AnnotationMode currentMode = AnnotationMode.PptBorder;
+
+    // 便捷属性：当前模式的角点（保持向后兼容）
+    private List<Point> Corners
+    {
+        get => allCorners[currentMode];
+        set => allCorners[currentMode] = value;
+    }
+
     private int? draggedPointIndex = null;
     private float zoomFactor = 1.0f;
     private Point zoomOffset = Point.Empty;
@@ -21,6 +38,8 @@ public partial class Form1 : Form
     private Button loadFolderButton = new();
     private Button saveButton = new();
     private Label instructionLabel = new();
+    private ComboBox modeComboBox = new();  // 模式选择下拉框
+    private CheckBox quickZoomCheckBox = new();  // 快速缩放复选框
 
     public Form1()
     {
@@ -75,24 +94,47 @@ public partial class Form1 : Form
         loadFolderButton.Click += LoadFolderButton_Click;
         this.Controls.Add(loadFolderButton);
 
+        // 模式选择下拉框
+        modeComboBox.Location = new Point(rightPanelX, 95);
+        modeComboBox.Size = new Size(250, 30);
+        modeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        modeComboBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        modeComboBox.Items.Add("PPT 边框（机器学习）");
+        modeComboBox.Items.Add("幕布边缘（传统算法）");
+        modeComboBox.SelectedIndex = 0;
+        modeComboBox.TabStop = false;
+        modeComboBox.SelectedIndexChanged += ModeComboBox_SelectedIndexChanged;
+        this.Controls.Add(modeComboBox);
+
+        // 快速缩放复选框
+        quickZoomCheckBox.Location = new Point(rightPanelX, 130);
+        quickZoomCheckBox.Size = new Size(250, 25);
+        quickZoomCheckBox.Text = "快速缩放";
+        quickZoomCheckBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        quickZoomCheckBox.TabStop = false;
+        quickZoomCheckBox.CheckedChanged += QuickZoomCheckBox_CheckedChanged;
+        this.Controls.Add(quickZoomCheckBox);
+
         // 说明文字
-        instructionLabel.Location = new Point(rightPanelX, 100);
-        instructionLabel.Size = new Size(250, 250);
+        instructionLabel.Location = new Point(rightPanelX, 160);
+        instructionLabel.Size = new Size(250, 220);
         instructionLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         instructionLabel.Text = "操作说明：\n\n" +
-                               "1. 点击选择四个角点\n" +
+                               "1. 选择标注模式\n\n" +
+                               "2. 点击选择四个角点\n" +
                                "   (左上→右上→右下→左下)\n\n" +
-                               "2. 拖拽调整角点位置\n\n" +
-                               "3. 滚轮 - 缩放\n" +
-                               "4. 中键 - 拖动图片\n" +
-                               "5. R - 重置视图\n\n" +
-                               "6. Enter - 保存并下一张\n" +
-                               "7. Space - 撤销上一个点\n" +
-                               "8. Esc - 清除所有角点";
+                               "3. 拖拽调整角点位置\n\n" +
+                               "4. Tab - 切换模式\n" +
+                               "5. 滚轮 - 缩放/快速缩放\n" +
+                               "6. 中键 - 拖动图片\n" +
+                               "7. R - 重置视图\n\n" +
+                               "8. Enter - 保存并下一张\n" +
+                               "9. Space - 撤销上一个点\n" +
+                               "10. Esc - 清除当前模式角点";
         this.Controls.Add(instructionLabel);
 
         // 上一张按钮
-        prevButton.Location = new Point(rightPanelX, 360);
+        prevButton.Location = new Point(rightPanelX, 420);
         prevButton.Size = new Size(120, 40);
         prevButton.Text = "上一张 (←)";
         prevButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -101,7 +143,7 @@ public partial class Form1 : Form
         this.Controls.Add(prevButton);
 
         // 下一张按钮
-        nextButton.Location = new Point(rightPanelX + 130, 360);
+        nextButton.Location = new Point(rightPanelX + 130, 420);
         nextButton.Size = new Size(120, 40);
         nextButton.Text = "下一张 (→)";
         nextButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
@@ -110,7 +152,7 @@ public partial class Form1 : Form
         this.Controls.Add(nextButton);
 
         // 保存按钮
-        saveButton.Location = new Point(rightPanelX, 410);
+        saveButton.Location = new Point(rightPanelX, 470);
         saveButton.Size = new Size(250, 50);
         saveButton.Text = "保存标注 (Enter)";
         saveButton.Enabled = false;
@@ -171,7 +213,8 @@ public partial class Form1 : Form
             return;
 
         currentImage?.Dispose();
-        corners.Clear();
+        allCorners[AnnotationMode.PptBorder].Clear();
+        allCorners[AnnotationMode.ScreenEdge].Clear();
         zoomFactor = 1.0f;
         zoomOffset = Point.Empty;
 
@@ -228,12 +271,17 @@ public partial class Form1 : Form
             using (var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
             using (var tempImage = Image.FromStream(stream, false, false))
             {
+                // 校正 EXIF 方向
+                var correctedImage = CorrectImageOrientation(tempImage);
+
                 // 立即转换为标准格式，解决色彩空间和特殊编码问题
-                var standardBitmap = new Bitmap(tempImage.Width, tempImage.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                var standardBitmap = new Bitmap(correctedImage.Width, correctedImage.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 using (var g = Graphics.FromImage(standardBitmap))
                 {
-                    g.DrawImage(tempImage, 0, 0, tempImage.Width, tempImage.Height);
+                    g.DrawImage(correctedImage, 0, 0, correctedImage.Width, correctedImage.Height);
                 }
+                correctedImage.Dispose();
+
                 // 验证图片可以正常绘制
                 ValidateImage(standardBitmap);
                 return standardBitmap;
@@ -247,11 +295,16 @@ public partial class Form1 : Form
             using (var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
             using (var bitmap = new Bitmap(stream))
             {
-                var standardBitmap = new Bitmap(bitmap.Width, bitmap.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                // 校正 EXIF 方向
+                var correctedImage = CorrectImageOrientation(bitmap);
+
+                var standardBitmap = new Bitmap(correctedImage.Width, correctedImage.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 using (var g = Graphics.FromImage(standardBitmap))
                 {
-                    g.DrawImage(bitmap, 0, 0, bitmap.Width, bitmap.Height);
+                    g.DrawImage(correctedImage, 0, 0, correctedImage.Width, correctedImage.Height);
                 }
+                correctedImage.Dispose();
+
                 ValidateImage(standardBitmap);
                 return standardBitmap;
             }
@@ -264,11 +317,16 @@ public partial class Form1 : Form
             using (var stream = new FileStream(imagePath, FileMode.Open, FileAccess.Read))
             using (var tempImage = Image.FromStream(stream, true, false))
             {
-                var standardBitmap = new Bitmap(tempImage.Width, tempImage.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                // 校正 EXIF 方向
+                var correctedImage = CorrectImageOrientation(tempImage);
+
+                var standardBitmap = new Bitmap(correctedImage.Width, correctedImage.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
                 using (var g = Graphics.FromImage(standardBitmap))
                 {
-                    g.DrawImage(tempImage, 0, 0, tempImage.Width, tempImage.Height);
+                    g.DrawImage(correctedImage, 0, 0, correctedImage.Width, correctedImage.Height);
                 }
+                correctedImage.Dispose();
+
                 ValidateImage(standardBitmap);
                 return standardBitmap;
             }
@@ -276,6 +334,75 @@ public partial class Form1 : Form
         catch { }
 
         return null;
+    }
+
+    /// <summary>
+    /// 根据 EXIF 方向信息校正图片方向
+    /// </summary>
+    private Image CorrectImageOrientation(Image image)
+    {
+        // 读取 EXIF 方向标签
+        const int PropertyTagOrientation = 0x0112;
+        if (!image.PropertyIdList.Contains(PropertyTagOrientation))
+        {
+            // 没有 EXIF 方向信息，返回原图
+            return new Bitmap(image);
+        }
+
+        var prop = image.GetPropertyItem(PropertyTagOrientation);
+        if (prop == null || prop.Value.Length < 1)
+        {
+            return new Bitmap(image);
+        }
+
+        ushort orientation = prop.Value[0];
+
+        // 根据方向值旋转/翻转图片
+        Bitmap rotated;
+
+        switch (orientation)
+        {
+            case 1: // 无旋转
+                return new Bitmap(image);
+
+            case 2: // 水平翻转
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.RotateNoneFlipX);
+                return rotated;
+
+            case 3: // 旋转 180 度
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.Rotate180FlipNone);
+                return rotated;
+
+            case 4: // 垂直翻转
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.RotateNoneFlipY);
+                return rotated;
+
+            case 5: // 水平翻转 + 逆时针 90 度
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.Rotate90FlipX);
+                return rotated;
+
+            case 6: // 顺时针 90 度（最常见）
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.Rotate90FlipNone);
+                return rotated;
+
+            case 7: // 水平翻转 + 顺时针 90 度
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.Rotate270FlipX);
+                return rotated;
+
+            case 8: // 逆时针 90 度
+                rotated = new Bitmap(image);
+                rotated.RotateFlip(RotateFlipType.Rotate270FlipNone);
+                return rotated;
+
+            default:
+                return new Bitmap(image);
+        }
     }
 
     private void ValidateImage(Image image)
@@ -297,13 +424,78 @@ public partial class Form1 : Form
             {
                 var json = File.ReadAllText(jsonPath);
                 var data = JsonSerializer.Deserialize<AnnotationData>(json);
-                if (data?.Corners != null && data.Corners.Count == 4)
+
+                if (data == null)
+                    return;
+
+                // 清空所有模式的角点
+                allCorners[AnnotationMode.PptBorder].Clear();
+                allCorners[AnnotationMode.ScreenEdge].Clear();
+
+                // 判断是新格式还是旧格式
+                if (data.Corners != null && data.PptCorners == null && data.ScreenCorners == null)
                 {
-                    corners = data.Corners.Select(c => new Point(c.X, c.Y)).ToList();
+                    // 旧格式：Corners 字段存在，识别为 PPT 边框
+                    allCorners[AnnotationMode.PptBorder] = data.Corners
+                        .Select(c => new Point(c.X, c.Y))
+                        .ToList();
+                }
+                else
+                {
+                    // 新格式：读取双模式字段
+                    if (data.PptCorners != null && data.PptCorners.Count == 4)
+                    {
+                        allCorners[AnnotationMode.PptBorder] = data.PptCorners
+                            .Select(c => new Point(c.X, c.Y))
+                            .ToList();
+                    }
+
+                    if (data.ScreenCorners != null && data.ScreenCorners.Count == 4)
+                    {
+                        allCorners[AnnotationMode.ScreenEdge] = data.ScreenCorners
+                            .Select(c => new Point(c.X, c.Y))
+                            .ToList();
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                // 加载失败时保持默认值（空角点）
+                MessageBox.Show(
+                    $"加载标注数据失败: {ex.Message}\n\n将作为新图片处理。",
+                    "加载错误",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
         }
+    }
+
+    private void ModeComboBox_SelectedIndexChanged(object? sender, EventArgs e)
+    {
+        SwitchToMode((AnnotationMode)modeComboBox.SelectedIndex);
+    }
+
+    private void QuickZoomCheckBox_CheckedChanged(object? sender, EventArgs e)
+    {
+        // 开启快速缩放模式时，自动切换到 0.75x 并居中
+        if (quickZoomCheckBox.Checked)
+        {
+            zoomFactor = 0.75f;
+            zoomOffset = Point.Empty;  // 居中放置
+            UpdateStatus();
+            pictureBox.Invalidate();
+        }
+    }
+
+    private void SwitchToMode(AnnotationMode newMode)
+    {
+        if (newMode == currentMode)
+            return;
+
+        currentMode = newMode;
+        UpdateStatus();
+        pictureBox.Invalidate(); // 重新绘制（边框颜色会改变）
     }
 
     private void UpdateStatus()
@@ -311,13 +503,30 @@ public partial class Form1 : Form
         int annotated = imageFiles
             .Count(f => File.Exists(Path.ChangeExtension(f, ".json")));
 
-        statusLabel.Text = $"进度: {currentIndex + 1}/{imageFiles.Count}  " +
-                          $"已标注: {annotated}  " +
-                          $"当前: {Path.GetFileName(imageFiles[currentIndex])}  " +
-                          $"角点: {corners.Count}/4  " +
-                          $"缩放: {zoomFactor:F1}x";
+        // 检查是否已加载图片
+        if (imageFiles.Count > 0 && currentIndex >= 0 && currentIndex < imageFiles.Count)
+        {
+            statusLabel.Text = $"进度: {currentIndex + 1}/{imageFiles.Count}  " +
+                              $"已标注: {annotated}  " +
+                              $"当前: {Path.GetFileName(imageFiles[currentIndex])}  " +
+                              $"模式: {currentMode.GetDisplayName()}  " +
+                              $"角点: {Corners.Count}/4  " +
+                              $"缩放: {zoomFactor:F1}x";
+        }
+        else
+        {
+            statusLabel.Text = $"请加载图片文件夹  " +
+                              $"模式: {currentMode.GetDisplayName()}  " +
+                              $"缩放: {zoomFactor:F1}x";
+        }
 
-        saveButton.Enabled = corners.Count == 4;
+        // 只有当前模式的角点完整时才允许保存
+        saveButton.Enabled = Corners.Count == 4;
+
+        // 同步下拉框选中项（防止循环触发）
+        modeComboBox.SelectedIndexChanged -= ModeComboBox_SelectedIndexChanged;
+        modeComboBox.SelectedIndex = (int)currentMode;
+        modeComboBox.SelectedIndexChanged += ModeComboBox_SelectedIndexChanged;
     }
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
@@ -338,12 +547,12 @@ public partial class Form1 : Form
             return;
 
         // 如果已经有4个点，检查是否点击了某个角点
-        if (corners.Count == 4)
+        if (Corners.Count == 4)
         {
             // 检查是否点击了某个角点附近 (20像素范围内)
-            for (int i = 0; i < corners.Count; i++)
+            for (int i = 0; i < Corners.Count; i++)
             {
-                var screenPoint = GetScreenCoordinates(corners[i]);
+                var screenPoint = GetScreenCoordinates(Corners[i]);
                 if (screenPoint.HasValue)
                 {
                     var distance = Math.Sqrt(
@@ -360,16 +569,16 @@ public partial class Form1 : Form
                 }
             }
             // 如果没有点击角点，清除所有点重新开始
-            corners.Clear();
+            Corners.Clear();
             UpdateStatus();
             pictureBox.Invalidate();
         }
 
         // 添加新角点
         var imagePoint = GetImageCoordinates(e.Location);
-        if (imagePoint.HasValue && corners.Count < 4)
+        if (imagePoint.HasValue && Corners.Count < 4)
         {
-            corners.Add(imagePoint.Value);
+            Corners.Add(imagePoint.Value);
             UpdateStatus();
             pictureBox.Invalidate();
         }
@@ -400,7 +609,7 @@ public partial class Form1 : Form
             var imagePoint = GetImageCoordinates(e.Location);
             if (imagePoint.HasValue)
             {
-                corners[draggedPointIndex.Value] = imagePoint.Value;
+                Corners[draggedPointIndex.Value] = imagePoint.Value;
                 pictureBox.Invalidate();
             }
         }
@@ -430,11 +639,50 @@ public partial class Form1 : Form
 
         float oldZoom = zoomFactor;
 
-        // 滚轮向上放大，向下缩小
-        if (e.Delta > 0)
-            zoomFactor = Math.Min(zoomFactor * 1.4f, 10.0f);
+        // 快速缩放模式：0.75, 1, 3.5, 6.5, 10 五个档位
+        if (quickZoomCheckBox.Checked)
+        {
+            // 定义所有档位
+            float[] zoomLevels = { 0.75f, 1.0f, 3.5f, 6.5f, 10.0f };
+
+            if (e.Delta > 0)  // 滚轮向上：放大
+            {
+                // 找到当前档位的索引，切换到下一个档位
+                int currentIndex = Array.FindIndex(zoomLevels, z => z >= zoomFactor - 0.01f);
+                if (currentIndex >= 0 && currentIndex < zoomLevels.Length - 1)
+                    zoomFactor = zoomLevels[currentIndex + 1];
+                else
+                    zoomFactor = zoomLevels[zoomLevels.Length - 1]; // 已是最大
+            }
+            else  // 滚轮向下：缩小
+            {
+                // 找到当前档位的索引，切换到上一个档位
+                int currentIndex = Array.FindIndex(zoomLevels, z => z >= zoomFactor - 0.01f);
+                if (currentIndex > 0)
+                    zoomFactor = zoomLevels[currentIndex - 1];
+                else if (currentIndex == 0)
+                    zoomFactor = zoomLevels[0]; // 已是最小
+                else if (zoomFactor > zoomLevels[zoomLevels.Length - 1])
+                    zoomFactor = zoomLevels[zoomLevels.Length - 1]; // 超过最大值，回到最大
+                else
+                    zoomFactor = zoomLevels[0]; // 小于最小值，回到最小
+            }
+
+            // 切换到 0.75 倍率时，居中放置
+            if (zoomFactor == 0.75f && oldZoom != 0.75f)
+            {
+                zoomOffset = Point.Empty;
+            }
+        }
         else
-            zoomFactor = Math.Max(zoomFactor / 1.4f, 0.1f);
+        {
+            // 普通缩放模式
+            // 滚轮向上放大，向下缩小
+            if (e.Delta > 0)
+                zoomFactor = Math.Min(zoomFactor * 1.4f, 10.0f);
+            else
+                zoomFactor = Math.Max(zoomFactor / 1.4f, 0.1f);
+        }
 
         // 计算基础缩放比例
         var imgWidth = currentImage.Width;
@@ -516,16 +764,48 @@ public partial class Form1 : Form
             return;
         }
 
-        // 绘制角点
-        for (int i = 0; i < corners.Count; i++)
+        // 绘制两种模式的边框
+        foreach (var mode in new[] { AnnotationMode.PptBorder, AnnotationMode.ScreenEdge })
         {
-            var screenPoint = GetScreenCoordinates(corners[i]);
+            var modeCorners = allCorners[mode];
+            if (modeCorners.Count >= 2)
+            {
+                var borderColor = mode.GetBorderColor();
+                using var pen = new Pen(borderColor, 2);
+
+                // 非当前模式使用虚线
+                if (mode != currentMode)
+                {
+                    pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                    pen.DashPattern = new float[] { 5, 5 };
+                    pen.DashCap = System.Drawing.Drawing2D.DashCap.Flat;
+                }
+
+                for (int i = 0; i < modeCorners.Count; i++)
+                {
+                    var p1 = GetScreenCoordinates(modeCorners[i]);
+                    var p2 = GetScreenCoordinates(modeCorners[(i + 1) % modeCorners.Count]);
+
+                    if (p1.HasValue && p2.HasValue)
+                    {
+                        if (i < modeCorners.Count - 1 || modeCorners.Count == 4)
+                            g.DrawLine(pen, p1.Value, p2.Value);
+                    }
+                }
+            }
+        }
+
+        // 绘制当前模式的角点（强调显示）
+        for (int i = 0; i < Corners.Count; i++)
+        {
+            var screenPoint = GetScreenCoordinates(Corners[i]);
             if (screenPoint.HasValue)
             {
                 var p = screenPoint.Value;
+                var borderColor = currentMode.GetBorderColor();
 
-                // 绘制圆圈
-                g.FillEllipse(Brushes.Red, p.X - 8, p.Y - 8, 16, 16);
+                // 绘制彩色圆圈
+                g.FillEllipse(new SolidBrush(borderColor), p.X - 8, p.Y - 8, 16, 16);
                 g.DrawEllipse(new Pen(Color.White, 2), p.X - 8, p.Y - 8, 16, 16);
 
                 // 绘制编号
@@ -535,19 +815,22 @@ public partial class Form1 : Form
             }
         }
 
-        // 绘制连线
-        if (corners.Count >= 2)
+        // 绘制非当前模式的角点（淡化显示）
+        foreach (var mode in new[] { AnnotationMode.PptBorder, AnnotationMode.ScreenEdge })
         {
-            var pen = new Pen(Color.Lime, 2);
-            for (int i = 0; i < corners.Count; i++)
-            {
-                var p1 = GetScreenCoordinates(corners[i]);
-                var p2 = GetScreenCoordinates(corners[(i + 1) % corners.Count]);
+            if (mode == currentMode) continue;
 
-                if (p1.HasValue && p2.HasValue)
+            var modeCorners = allCorners[mode];
+            for (int i = 0; i < modeCorners.Count; i++)
+            {
+                var screenPoint = GetScreenCoordinates(modeCorners[i]);
+                if (screenPoint.HasValue)
                 {
-                    if (i < corners.Count - 1 || corners.Count == 4)
-                        g.DrawLine(pen, p1.Value, p2.Value);
+                    var p = screenPoint.Value;
+                    var borderColor = mode.GetBorderColor();
+
+                    // 绘制小号空心圆圈
+                    g.DrawEllipse(new Pen(borderColor, 1), p.X - 5, p.Y - 5, 10, 10);
                 }
             }
         }
@@ -615,18 +898,54 @@ public partial class Form1 : Form
 
     private bool SaveCurrentAnnotation()
     {
-        if (currentIndex < 0 || corners.Count != 4)
+        if (currentIndex < 0 || Corners.Count != 4)
             return false;
 
         string imagePath = imageFiles[currentIndex];
         string jsonPath = Path.ChangeExtension(imagePath, ".json");
 
-        var data = new AnnotationData
+        // 加载已有数据（如果存在）
+        AnnotationData data;
+        if (File.Exists(jsonPath))
         {
-            Corners = corners.Select(p => new CornerPoint { X = p.X, Y = p.Y }).ToList()
+            try
+            {
+                var existingJson = File.ReadAllText(jsonPath);
+                var existingData = JsonSerializer.Deserialize<AnnotationData>(existingJson);
+                data = existingData ?? new AnnotationData();
+            }
+            catch
+            {
+                data = new AnnotationData();
+            }
+        }
+        else
+        {
+            data = new AnnotationData();
+        }
+
+        // 更新当前模式的角点
+        if (currentMode == AnnotationMode.PptBorder)
+        {
+            data.PptCorners = allCorners[AnnotationMode.PptBorder]
+                .Select(p => new CornerPoint { X = p.X, Y = p.Y })
+                .ToList();
+        }
+        else
+        {
+            data.ScreenCorners = allCorners[AnnotationMode.ScreenEdge]
+                .Select(p => new CornerPoint { X = p.X, Y = p.Y })
+                .ToList();
+        }
+
+        // 序列化选项（忽略 null 值）
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
 
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(data, options);
         File.WriteAllText(jsonPath, json);
 
         UpdateStatus();
@@ -652,22 +971,45 @@ public partial class Form1 : Form
     {
         switch (e.KeyCode)
         {
+            case Keys.Tab:
+                // Tab 键切换模式
+                var newMode = currentMode == AnnotationMode.PptBorder
+                    ? AnnotationMode.ScreenEdge
+                    : AnnotationMode.PptBorder;
+                SwitchToMode(newMode);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+                break;
+
             case Keys.Enter:
-                if (corners.Count == 4)
+                if (Corners.Count == 4)
                 {
                     if (SaveCurrentAnnotation())
                     {
                         NavigateImage(1);
                     }
                 }
+                else
+                {
+                    // 提示用户当前模式角点未完成
+                    var unfinishedMode = currentMode == AnnotationMode.PptBorder
+                        ? "PPT 边框"
+                        : "幕布边缘";
+                    MessageBox.Show(
+                        $"当前{unfinishedMode}模式仅标注了 {Corners.Count} 个角点，需要 4 个角点才能保存。",
+                        "角点未完成",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information
+                    );
+                }
                 e.Handled = true;
                 break;
 
             case Keys.Space:
                 // 撤销上一个点
-                if (corners.Count > 0)
+                if (Corners.Count > 0)
                 {
-                    corners.RemoveAt(corners.Count - 1);
+                    Corners.RemoveAt(Corners.Count - 1);
                     UpdateStatus();
                     pictureBox.Invalidate();
                 }
@@ -686,7 +1028,7 @@ public partial class Form1 : Form
 
             case Keys.Back:
             case Keys.Escape:
-                corners.Clear();
+                Corners.Clear();
                 UpdateStatus();
                 pictureBox.Invalidate();
                 e.Handled = true;
@@ -704,10 +1046,46 @@ public partial class Form1 : Form
     }
 }
 
+// 标注模式枚举
+public enum AnnotationMode
+{
+    PptBorder,      // PPT 边框（绿色）
+    ScreenEdge      // 幕布边缘（蓝色）
+}
+
+// 枚举扩展方法
+public static class AnnotationModeExtensions
+{
+    public static string GetDisplayName(this AnnotationMode mode)
+    {
+        return mode switch
+        {
+            AnnotationMode.PptBorder => "PPT 边框",
+            AnnotationMode.ScreenEdge => "幕布边缘",
+            _ => "未知模式"
+        };
+    }
+
+    public static Color GetBorderColor(this AnnotationMode mode)
+    {
+        return mode switch
+        {
+            AnnotationMode.PptBorder => Color.Lime,        // 绿色
+            AnnotationMode.ScreenEdge => Color.DodgerBlue,  // 蓝色
+            _ => Color.White
+        };
+    }
+}
+
 // JSON 数据模型
 public class AnnotationData
 {
-    public List<CornerPoint> Corners { get; set; } = new();
+    // 新格式：双模式字段
+    public List<CornerPoint>? PptCorners { get; set; }
+    public List<CornerPoint>? ScreenCorners { get; set; }
+
+    // 旧格式字段（向后兼容，仅用于读取）
+    public List<CornerPoint>? Corners { get; set; }
 }
 
 public class CornerPoint

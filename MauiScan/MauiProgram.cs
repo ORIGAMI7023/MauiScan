@@ -2,7 +2,6 @@
 using MauiScan.Services;
 using MauiScan.Services.Sync;
 using MauiScan.Views;
-using MauiScan.Controls;
 using MauiScan.ML.Services;
 using MauiScan.ML.Models;
 
@@ -20,12 +19,7 @@ namespace MauiScan
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
                 })
-                .ConfigureMauiHandlers(handlers =>
-                {
-#if ANDROID
-                    handlers.AddHandler<CameraView, Platforms.Android.Handlers.CameraPreviewHandler>();
-#endif
-                });
+                .ConfigureMauiHandlers(handlers => { });
 
             // 注册服务（使用 Native C++ OpenCV 实现）
             builder.Services.AddSingleton<IImageProcessingService, NativeImageProcessingService>();
@@ -35,6 +29,9 @@ namespace MauiScan
 
             // 注册两阶段检测服务
             builder.Services.AddSingleton<TwoStageDetectionService>();
+
+            // 注册配置服务
+            builder.Services.AddSingleton<IConfigService, ConfigService>();
 
             // 注册 ML 推理服务
             builder.Services.AddSingleton<IMLInferenceService>(sp =>
@@ -75,8 +72,8 @@ namespace MauiScan
 
             // 注册页面
             builder.Services.AddTransient<ScanPage>();
-            builder.Services.AddTransient<CameraPage>();
             builder.Services.AddTransient<HistoryPage>();
+            builder.Services.AddTransient<ScanPreviewPage>();
             builder.Services.AddTransient<MLTestPage>();  // ML 测试页面
             builder.Services.AddTransient<TwoStageDetectionTestPage>();  // 两阶段检测测试页面
 

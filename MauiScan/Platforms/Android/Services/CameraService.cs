@@ -1,9 +1,11 @@
+using Android.Content;
+using Android.Provider;
 using MauiScan.Services;
 
 namespace MauiScan.Platforms.Android.Services;
 
 /// <summary>
-/// Android 相机服务实现（使用自定义相机页面）
+/// Android 相机服务实现（使用系统相机）
 /// </summary>
 public class CameraService : ICameraService
 {
@@ -17,8 +19,8 @@ public class CameraService : ICameraService
                 throw new Exception("相机权限被拒绝");
         }
 
-        // 启动自定义相机页面并等待结果
-        return await CameraPageService.CapturePhotoAsync();
+        // 启动系统相机并等待结果
+        return await CameraPageService.LaunchSystemCameraAsync();
     }
 
     public async Task<bool> CheckPermissionsAsync()
@@ -35,30 +37,75 @@ public class CameraService : ICameraService
 }
 
 /// <summary>
-/// 相机页面服务 - 管理相机页面的导航和结果
+/// 系统相机拍照服务 - 管理拍照状态和临时文件
 /// </summary>
 public static class CameraPageService
 {
-    private static TaskCompletionSource<byte[]?>? _captureCompletionSource;
+    public const int REQUEST_CODE = 1001;
 
-    public static async Task<byte[]?> CapturePhotoAsync()
+    private static TaskCompletionSource<byte[]?>? _captureCompletionSource;
+    private static string? _tempFilePath;
+
+    /// <summary>
+    /// 启动系统相机并异步等待结果
+    /// </summary>
+    public static Task<byte[]?> LaunchSystemCameraAsync()
     {
         _captureCompletionSource = new TaskCompletionSource<byte[]?>();
 
-        // 导航到相机页面
-        await Shell.Current.GoToAsync("camera");
+        var activity = Platform.CurrentActivity!;
+        var cacheDir = activity.CacheDir!;
+        var timeStamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var tempFile = new Java.IO.File(cacheDir, $"MauiScan_capture_{timeStamp}.jpg");
+        _tempFilePath = tempFile.AbsolutePath;
 
-        // 等待拍照结果
-        return await _captureCompletionSource.Task;
+        var uri = AndroidX.Core.Content.FileProvider.GetUriForFile(activity, activity.PackageName + ".fileprovider", tempFile);
+        var intent = new Intent(MediaStore.ActionImageCapture);
+        intent.PutExtra(MediaStore.ExtraOutput, uri);
+        intent.AddFlags(ActivityFlags.GrantReadUriPermission | ActivityFlags.GrantWriteUriPermission);
+        intent.AddFlags(ActivityFlags.NoAnimation);
+
+        activity.StartActivityForResult(intent, REQUEST_CODE);
+
+        return _captureCompletionSource.Task;
     }
 
-    public static void SetResult(byte[]? imageData)
+    /// <summary>
+    /// 由 MainActivity.OnActivityResult 在拍照成功后调用
+    /// </summary>
+    public static void CompleteCapture()
     {
-        _captureCompletionSource?.TrySetResult(imageData);
+        if (_captureCompletionSource == null) return;
+
+        var filePath = _tempFilePath;
+        _tempFilePath = null;
+
+        if (filePath != null && System.IO.File.Exists(filePath))
+        {
+            try
+            {
+                var bytes = System.IO.File.ReadAllBytes(filePath);
+                System.IO.File.Delete(filePath);
+                _captureCompletionSource.TrySetResult(bytes);
+                return;
+            }
+            catch { }
+        }
+
+        _captureCompletionSource.TrySetResult(null);
     }
 
-    public static void Cancel()
+    /// <summary>
+    /// 由 MainActivity.OnActivityResult 在取消时调用
+    /// </summary>
+    public static void CancelCapture()
     {
+        if (_tempFilePath != null)
+        {
+            try { System.IO.File.Delete(_tempFilePath); } catch { }
+            _tempFilePath = null;
+        }
         _captureCompletionSource?.TrySetResult(null);
     }
+
 }

@@ -1,6 +1,8 @@
-﻿using Android.App;
+using Android.App;
+using Android.Content;
 using Android.Content.PM;
 using Android.Views;
+using MauiScan.Platforms.Android.Services;
 
 namespace MauiScan
 {
@@ -17,6 +19,19 @@ namespace MauiScan
                 return true; // 消费事件，不调节音量
             }
             return base.OnKeyDown(keyCode, e);
+        }
+
+        protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
+        {
+            base.OnActivityResult(requestCode, resultCode, data);
+
+            if (requestCode == CameraPageService.REQUEST_CODE)
+            {
+                if (resultCode == Result.Ok)
+                    CameraPageService.CompleteCapture();
+                else
+                    CameraPageService.CancelCapture();
+            }
         }
     }
 }

@@ -5,10 +5,28 @@
              x:Class="MauiScan.Views.HistoryPage"
              Title="历史记录">
 
-    <Grid RowDefinitions="*" Padding="0">
+    <Grid RowDefinitions="Auto,*" Padding="0">
+
+        <!-- 服务器连接状态 -->
+        <HorizontalStackLayout Grid.Row="0"
+                                 Spacing="6"
+                                 Padding="15,10"
+                                 BackgroundColor="#F8F8F8"
+                                 HorizontalOptions="End">
+            <Ellipse x:Name="ConnectionStatusDot"
+                     WidthRequest="10"
+                     HeightRequest="10"
+                     Fill="Red"
+                     VerticalOptions="Center"/>
+            <Label x:Name="ConnectionStatusLabel"
+                   Text="未连接"
+                   FontSize="12"
+                   TextColor="#666"
+                   VerticalOptions="Center"/>
+        </HorizontalStackLayout>
 
         <!-- 历史列表 -->
-        <RefreshView Grid.Row="0"
+        <RefreshView Grid.Row="1"
                      x:Name="RefreshViewControl"
                      IsRefreshing="{Binding IsRefreshing}"
                      Command="{Binding RefreshCommand}">
@@ -90,7 +108,7 @@
         </RefreshView>
 
         <!-- 加载指示器 -->
-        <ActivityIndicator Grid.Row="0"
+        <ActivityIndicator Grid.Row="1"
                           x:Name="LoadingIndicator"
                           IsRunning="False"
                           IsVisible="False"

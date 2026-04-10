@@ -11,6 +11,7 @@ public partial class ScanPage : ContentPage
     private readonly IClipboardService _clipboardService;
     private readonly IDragDropService? _dragDropService;
     private readonly ScanSyncService _syncService;
+    private readonly IConfigService _configService;
 
     private byte[]? _currentImageData;
     private int _currentRotation = 0;
@@ -22,6 +23,7 @@ public partial class ScanPage : ContentPage
         IImageProcessingService imageProcessingService,
         IClipboardService clipboardService,
         ScanSyncService syncService,
+        IConfigService configService,
         IDragDropService? dragDropService = null)
     {
         InitializeComponent();
@@ -31,12 +33,16 @@ public partial class ScanPage : ContentPage
         _clipboardService = clipboardService;
         _dragDropService = dragDropService;
         _syncService = syncService;
+        _configService = configService;
 
         // 监听来自其他设备的新扫描
         _syncService.NewScanReceived += OnNewScanReceived;
 
         // 监听连接状态变化
         _syncService.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // 监听错误事件
+        _syncService.ErrorOccurred += OnErrorOccurred;
 
         // 添加长按手势用于拖放
         var longPressGesture = new TapGestureRecognizer();
@@ -76,86 +82,42 @@ public partial class ScanPage : ContentPage
 
     private async void OnCaptureClicked(object sender, EventArgs e)
     {
+        await OnCaptureClickedAsync();
+    }
+
+    /// <summary>
+    /// 处理系统相机拍回来的照片
+    /// </summary>
+    private async Task ProcessCapturedPhotoAsync(byte[] photoBytes)
+    {
         try
         {
-            StatusLabel.Text = "正在拍摄...";
+            StatusLabel.Text = "正在处理图像...";
             SetLoading(true);
-
-            // 1. 拍照
-            var photoBytes = await _cameraService.TakePhotoAsync();
-            if (photoBytes == null)
-            {
-                StatusLabel.Text = "拍摄已取消";
-                return;
-            }
 
             // 保存原图（用于手动标注）
             _originalPhotoBytes = photoBytes;
 
-            StatusLabel.Text = "正在处理图像...";
-
-            // 2. 处理图像（边缘检测 + 透视变换）
+            // 处理图像（边缘检测 + 透视变换）
             var result = await _imageProcessingService.ProcessScanAsync(photoBytes, false);
 
             if (!result.IsSuccess)
             {
-                // 识别失败：显示原图 + 手动标注按钮（仅 Android）
+                // 识别失败：进入预览页面的ROI模式
                 StatusLabel.Text = $"自动识别失败 - {result.ErrorMessage ?? "未知错误"}";
 
                 // 上传失败的原图到 training 目录
                 _ = UploadToServerAsync(photoBytes, photoBytes, 0, 0);
 
-#if ANDROID
-                // 显示原图
-                _currentImageData = photoBytes;
-                PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(photoBytes));
-                PreviewImage.IsVisible = true;
-                PlaceholderLabel.IsVisible = false;
-
-                // 显示手动标注按钮
-                ManualAnnotationButton.IsVisible = true;
-                SaveButton.IsEnabled = false;
-                RotateButtonsGrid.IsVisible = false;
-#else
-                // 其他平台：清空预览
-                _currentImageData = null;
-                PreviewImage.IsVisible = false;
-                PlaceholderLabel.IsVisible = true;
-                SaveButton.IsEnabled = false;
-                RotateButtonsGrid.IsVisible = false;
-#endif
+                // 进入预览页的ROI/四点模式，让用户手动调整
+                await ShowPreviewAsync(photoBytes, isAutoSuccess: false);
                 return;
             }
 
-            // 3. 识别成功：隐藏手动标注按钮
-#if ANDROID
-            ManualAnnotationButton.IsVisible = false;
-#endif
-
-            // 4. 显示结果
-            _currentImageData = result.ImageData;
-            _currentRotation = 0;
-            PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(result.ImageData));
-            PreviewImage.IsVisible = true;
-            PlaceholderLabel.IsVisible = false;
-            SaveButton.IsEnabled = true;
-            RotateButtonsGrid.IsVisible = true;
-
-            // 4. 自动复制到剪贴板
             System.Diagnostics.Debug.WriteLine($"扫描结果 - Width: {result.Width}, Height: {result.Height}");
 
-            var copied = await _clipboardService.CopyImageToClipboardAsync(result.ImageData);
-            if (copied)
-            {
-                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height}) | 已复制到剪贴板";
-            }
-            else
-            {
-                StatusLabel.Text = $"✓ 扫描成功 ({result.Width}×{result.Height})";
-            }
-
-            // 5. 自动上传到服务器
-            _ = UploadToServerAsync(_originalPhotoBytes, result.ImageData, result.Width, result.Height);
+            // 跳转预览页
+            await ShowPreviewAsync(result.ImageData, isAutoSuccess: true);
         }
         catch (Exception ex)
         {
@@ -165,6 +127,79 @@ public partial class ScanPage : ContentPage
         finally
         {
             SetLoading(false);
+        }
+    }
+
+    private async void OnRefreshClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            SetLoading(true);
+            StatusLabel.Text = "正在获取最新扫描...";
+
+            if (!_syncService.IsConnected)
+                await _syncService.ConnectAsync();
+
+            await LoadLatestScanFromServerAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusLabel.Text = $"刷新失败: {ex.Message}";
+        }
+        finally
+        {
+            SetLoading(false);
+        }
+    }
+
+    private async Task ShowPreviewAsync(byte[] imageData, bool isAutoSuccess = true)
+    {
+        var previewPage = new ScanPreviewPage(
+            imageData: imageData,
+            isAutoSuccess: isAutoSuccess,
+            imageProcessingService: _imageProcessingService,
+            originalPhoto: isAutoSuccess ? null : _originalPhotoBytes
+        );
+
+        previewPage.Confirmed += async (finalData) =>
+        {
+            // 用户确认使用：更新主页显示、复制、上传
+            _currentImageData = finalData;
+            _currentRotation = 0;
+            PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(finalData));
+            PreviewImage.IsVisible = true;
+            PlaceholderLabel.IsVisible = false;
+            SaveButton.IsEnabled = true;
+
+            var copied = await _clipboardService.CopyImageToClipboardAsync(finalData);
+            StatusLabel.Text = copied
+                ? "✓ 扫描成功 | 已复制到剪贴板"
+                : "✓ 扫描成功";
+
+            _ = UploadToServerAsync(_originalPhotoBytes!, finalData, 0, 0);
+        };
+
+        previewPage.Retake += async () =>
+        {
+            // 用户重拍：直接再次启动相机
+            await OnCaptureClickedAsync();
+        };
+
+        await Navigation.PushAsync(previewPage);
+    }
+
+    private async Task OnCaptureClickedAsync()
+    {
+        try
+        {
+            var photoBytes = await _cameraService.TakePhotoAsync();
+            if (photoBytes != null)
+                await ProcessCapturedPhotoAsync(photoBytes);
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("错误", $"启动相机失败: {ex.Message}", "确定");
+            StatusLabel.Text = "发生错误";
         }
     }
 
@@ -185,7 +220,7 @@ public partial class ScanPage : ContentPage
             // 其他平台: 保存到应用目录
             var filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
             await File.WriteAllBytesAsync(filePath, _currentImageData);
-            StatusLabel.Text = $"✓ 已保存: {fileName}";
+            StatusLabel.Text = $"✓ 已保存: {fileName}";    
 #endif
         }
         catch (Exception ex)
@@ -220,16 +255,6 @@ public partial class ScanPage : ContentPage
     }
 #endif
 
-    private async void OnRotateLeftClicked(object sender, EventArgs e)
-    {
-        await RotateImageAsync(-90);
-    }
-
-    private async void OnRotateRightClicked(object sender, EventArgs e)
-    {
-        await RotateImageAsync(90);
-    }
-
     private async void OnManualAnnotationClicked(object sender, EventArgs e)
     {
 #if ANDROID
@@ -263,7 +288,6 @@ public partial class ScanPage : ContentPage
                 PreviewImage.IsVisible = true;
                 PlaceholderLabel.IsVisible = false;
                 SaveButton.IsEnabled = true;
-                RotateButtonsGrid.IsVisible = true;
                 ManualAnnotationButton.IsVisible = false;
 
                 // 自动复制到剪贴板
@@ -318,78 +342,30 @@ public partial class ScanPage : ContentPage
         }
     }
 
-    private async Task RotateImageAsync(int degrees)
-    {
-        if (_currentImageData == null)
-            return;
-
-        try
-        {
-            SetLoading(true);
-            StatusLabel.Text = "正在旋转...";
-
-            _currentRotation = (_currentRotation + degrees + 360) % 360;
-
-            var rotatedData = await Task.Run(() => RotateJpegBytes(_currentImageData, degrees));
-            if (rotatedData != null)
-            {
-                _currentImageData = rotatedData;
-                PreviewImage.Source = ImageSource.FromStream(() => new MemoryStream(rotatedData));
-
-                // 更新剪贴板
-                var copied = await _clipboardService.CopyImageToClipboardAsync(rotatedData);
-                if (copied)
-                {
-                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90° | 已复制到剪贴板";
-                }
-                else
-                {
-                    StatusLabel.Text = $"已旋转 {(degrees > 0 ? "右" : "左")} 90°";
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            StatusLabel.Text = $"旋转失败: {ex.Message}";
-        }
-        finally
-        {
-            SetLoading(false);
-        }
-    }
-
-    private byte[]? RotateJpegBytes(byte[] imageBytes, int degrees)
-    {
-#if ANDROID
-        using var bitmap = Android.Graphics.BitmapFactory.DecodeByteArray(imageBytes, 0, imageBytes.Length);
-        if (bitmap == null) return null;
-
-        var matrix = new Android.Graphics.Matrix();
-        matrix.PostRotate(degrees);
-
-        using var rotatedBitmap = Android.Graphics.Bitmap.CreateBitmap(
-            bitmap, 0, 0, bitmap.Width, bitmap.Height, matrix, true);
-
-        using var stream = new MemoryStream();
-        rotatedBitmap.Compress(Android.Graphics.Bitmap.CompressFormat.Jpeg, 90, stream);
-        return stream.ToArray();
-#else
-        // 其他平台暂不支持
-        return imageBytes;
-#endif
-    }
 
     private void SetLoading(bool isLoading)
     {
         LoadingIndicator.IsRunning = isLoading;
         LoadingIndicator.IsVisible = isLoading;
         CaptureButton.IsEnabled = !isLoading;
+        RefreshButton.IsEnabled = !isLoading;
         SaveButton.IsEnabled = !isLoading && _currentImageData != null;
     }
 
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        // 初始化配置
+        try
+        {
+            var config = await _configService.LoadConfigAsync();
+            System.Diagnostics.Debug.WriteLine($"配置加载成功: ServerUrl={config.ServerUrl}, ApiKey={(string.IsNullOrEmpty(config.ApiKey) ? "未设置" : "已设置")}");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"配置加载失败: {ex.Message}");
+        }
 
         // 页面显示时自动连接到服务器
         if (!_syncService.IsConnected)
@@ -423,8 +399,7 @@ public partial class ScanPage : ContentPage
                     PreviewImage.IsVisible = true;
                     PlaceholderLabel.IsVisible = false;
                     SaveButton.IsEnabled = true;
-                    RotateButtonsGrid.IsVisible = true;
-
+    
                     StatusLabel.Text = $"✓ 已加载最新扫描: {latestScan.Width}×{latestScan.Height}";
 
                     // 自动复制到剪贴板
@@ -497,8 +472,7 @@ public partial class ScanPage : ContentPage
                     PreviewImage.IsVisible = true;
                     PlaceholderLabel.IsVisible = false;
                     SaveButton.IsEnabled = true;
-                    RotateButtonsGrid.IsVisible = true;
-
+    
                     StatusLabel.Text = $"✓ 收到新扫描: {scanImage.FileName} ({scanImage.Width}×{scanImage.Height})";
 
                     // 自动复制到剪贴板
@@ -526,6 +500,14 @@ public partial class ScanPage : ContentPage
                 ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
                 ConnectionStatusLabel.Text = "未连接";
             }
+        });
+    }
+
+    private async void OnErrorOccurred(string errorMessage)
+    {
+        await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            await DisplayAlert("同步错误", errorMessage, "确定");
         });
     }
 }

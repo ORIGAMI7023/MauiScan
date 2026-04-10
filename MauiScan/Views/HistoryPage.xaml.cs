@@ -12,6 +12,7 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
 {
     private readonly ScanSyncService _syncService;
     private readonly IClipboardService _clipboardService;
+    private readonly IConfigService _configService;
 
     public ObservableCollection<HistoryItemViewModel> HistoryItems { get; } = new();
 
@@ -36,15 +37,22 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
-    public HistoryPage(ScanSyncService syncService, IClipboardService clipboardService)
+    public HistoryPage(ScanSyncService syncService, IClipboardService clipboardService, IConfigService configService)
     {
         InitializeComponent();
 
         _syncService = syncService;
         _clipboardService = clipboardService;
+        _configService = configService;
 
         RefreshCommand = new Command(async () => await LoadHistoryAsync());
         DeleteCommand = new Command<HistoryItemViewModel>(async (item) => await DeleteItemAsync(item));
+
+        // 监听连接状态变化
+        _syncService.ConnectionStateChanged += OnConnectionStateChanged;
+
+        // 监听错误事件
+        _syncService.ErrorOccurred += OnErrorOccurred;
 
         BindingContext = this;
     }
@@ -54,6 +62,27 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+
+        // 初始化配置并连接服务器
+        try
+        {
+            var config = await _configService.LoadConfigAsync();
+            System.Diagnostics.Debug.WriteLine($"配置加载成功: ServerUrl={config.ServerUrl}, ApiKey={(string.IsNullOrEmpty(config.ApiKey) ? "未设置" : "已设置")}");
+
+            // 如果未连接，尝试连接
+            if (!_syncService.IsConnected)
+            {
+                await _syncService.ConnectAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"配置加载失败: {ex.Message}");
+        }
+
+        // 主动同步连接状态到 UI（避免已连接时事件不触发导致状态显示错误）
+        OnConnectionStateChanged(_syncService.IsConnected);
+
         await LoadHistoryAsync(showLoadingIndicator: true);
     }
 
@@ -70,10 +99,20 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
 
             var scans = await _syncService.GetRecentScansAsync(20);
 
-            HistoryItems.Clear();
-            foreach (var scan in scans)
+            // 增量更新：删除不存在的，添加新增的，保持顺序
+            var newFileNames = scans.Select(s => s.FileName).ToHashSet();
+            var toRemove = HistoryItems.Where(i => !newFileNames.Contains(i.ScanImage.FileName)).ToList();
+            foreach (var item in toRemove)
+                HistoryItems.Remove(item);
+
+            var existingFileNames = HistoryItems.Select(i => i.ScanImage.FileName).ToHashSet();
+            for (int i = 0; i < scans.Count; i++)
             {
-                HistoryItems.Add(new HistoryItemViewModel(scan, _syncService));
+                var scan = scans[i];
+                if (!existingFileNames.Contains(scan.FileName))
+                {
+                    HistoryItems.Insert(i, new HistoryItemViewModel(scan, _syncService));
+                }
             }
         }
         catch (Exception ex)
@@ -110,20 +149,10 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
     {
         try
         {
-            LoadingIndicator.IsRunning = true;
-            LoadingIndicator.IsVisible = true;
-
-            // 下载图片
-            var imageData = await _syncService.DownloadScanAsync(item.ScanImage.DownloadUrl);
-            if (imageData == null)
-            {
-                await DisplayAlert("错误", "下载图片失败", "确定");
-                return;
-            }
-
-            // 显示操作选项
+            // 先弹窗，不需要等待下载
             var action = await DisplayActionSheet(
                 $"{item.ScannedAtText}\n{item.SizeText}",
+                "删除",
                 "取消",
                 null,
                 "复制到剪贴板",
@@ -132,12 +161,29 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
             switch (action)
             {
                 case "复制到剪贴板":
-                    await _clipboardService.CopyImageToClipboardAsync(imageData);
-                    await DisplayAlert("成功", "已复制到剪贴板", "确定");
+                case "保存到相册":
+                    // 只有需要图片数据时才下载
+                    LoadingIndicator.IsRunning = true;
+                    LoadingIndicator.IsVisible = true;
+                    var imageData = await _syncService.DownloadScanAsync(item.ScanImage.DownloadUrl);
+                    if (imageData == null)
+                    {
+                        await DisplayAlert("错误", "下载图片失败", "确定");
+                        return;
+                    }
+                    if (action == "复制到剪贴板")
+                    {
+                        await _clipboardService.CopyImageToClipboardAsync(imageData);
+                        await DisplayAlert("成功", "已复制到剪贴板", "确定");
+                    }
+                    else
+                    {
+                        await SaveToGalleryAsync(imageData, item.ScanImage.FileName);
+                    }
                     break;
 
-                case "保存到相册":
-                    await SaveToGalleryAsync(imageData, item.ScanImage.FileName);
+                case "删除":
+                    await DeleteItemAsync(item);
                     break;
             }
         }
@@ -244,6 +290,31 @@ public partial class HistoryPage : ContentPage, INotifyPropertyChanged
             LoadingIndicator.IsVisible = false;
         }
     }
+
+    private void OnConnectionStateChanged(bool isConnected)
+    {
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (isConnected)
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Green);
+                ConnectionStatusLabel.Text = "已连接";
+            }
+            else
+            {
+                ConnectionStatusDot.Fill = new SolidColorBrush(Colors.Red);
+                ConnectionStatusLabel.Text = "未连接";
+            }
+        });
+    }
+
+    private async void OnErrorOccurred(string errorMessage)
+    {
+        await MainThread.InvokeOnMainThreadAsync(async () =>
+        {
+            await DisplayAlert("同步错误", errorMessage, "确定");
+        });
+    }
 }
 
 public class HistoryItemViewModel : System.ComponentModel.INotifyPropertyChanged
@@ -283,7 +354,9 @@ public class HistoryItemViewModel : System.ComponentModel.INotifyPropertyChanged
     {
         try
         {
-            var imageData = await _syncService.DownloadScanAsync(ScanImage.DownloadUrl);
+            // 优先使用缩略图，回退到完整图片
+            var url = !string.IsNullOrEmpty(ScanImage.ThumbnailUrl) ? ScanImage.ThumbnailUrl : ScanImage.DownloadUrl;
+            var imageData = await _syncService.DownloadScanAsync(url);
             if (imageData != null)
             {
                 ThumbnailSource = ImageSource.FromStream(() => new MemoryStream(imageData));

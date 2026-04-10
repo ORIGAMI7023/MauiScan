@@ -8,22 +8,31 @@ namespace MauiScan.Services.Sync;
 public class ScanSyncService
 {
     private readonly string _serverUrl;
+    private readonly string? _apiKey;
     private readonly HttpClient _httpClient;
     private HubConnection? _hubConnection;
 
     public event Action<ScanImageDto>? NewScanReceived;
     public event Action<bool>? ConnectionStateChanged;
+    public event Action<string>? ErrorOccurred;
 
     public bool IsConnected => _hubConnection?.State == HubConnectionState.Connected;
 
-    public ScanSyncService(string serverUrl)
+    public ScanSyncService(string serverUrl, string? apiKey = null)
     {
         _serverUrl = serverUrl.TrimEnd('/');
+        _apiKey = apiKey;
         _httpClient = new HttpClient
         {
             BaseAddress = new Uri(_serverUrl),
             Timeout = TimeSpan.FromMinutes(2)
         };
+
+        // 如果提供了 API Key，设置默认请求头
+        if (!string.IsNullOrEmpty(_apiKey))
+        {
+            _httpClient.DefaultRequestHeaders.Add("X-API-Key", _apiKey);
+        }
     }
 
     public async Task ConnectAsync()
@@ -101,10 +110,26 @@ public class ScanSyncService
             System.Diagnostics.Debug.WriteLine($"[SignalR] 连接成功: {_serverUrl}/hubs/scan");
             ConnectionStateChanged?.Invoke(true);
         }
+        catch (HttpRequestException ex)
+        {
+            var errorMsg = $"网络错误: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"[SignalR] {errorMsg}");
+            ConnectionStateChanged?.Invoke(false);
+            ErrorOccurred?.Invoke(errorMsg);
+        }
+        catch (TimeoutException ex)
+        {
+            var errorMsg = $"连接超时: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"[SignalR] {errorMsg}");
+            ConnectionStateChanged?.Invoke(false);
+            ErrorOccurred?.Invoke(errorMsg);
+        }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[SignalR] 连接失败: {ex.Message}");
+            var errorMsg = $"连接失败: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"[SignalR] {errorMsg}");
             ConnectionStateChanged?.Invoke(false);
+            ErrorOccurred?.Invoke(errorMsg);
         }
     }
 
@@ -146,13 +171,38 @@ public class ScanSyncService
             else
             {
                 var error = await response.Content.ReadAsStringAsync();
-                System.Diagnostics.Debug.WriteLine($"图片上传失败: {response.StatusCode}, {error}");
+                var errorMsg = $"上传失败 ({response.StatusCode}): {error}";
+                System.Diagnostics.Debug.WriteLine(errorMsg);
+                ErrorOccurred?.Invoke(errorMsg);
                 return null;
             }
         }
+        catch (HttpRequestException ex)
+        {
+            var errorMsg = $"网络错误: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"图片上传异常: {errorMsg}");
+            ErrorOccurred?.Invoke(errorMsg);
+            return null;
+        }
+        catch (TimeoutException ex)
+        {
+            var errorMsg = $"上传超时: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"图片上传异常: {errorMsg}");
+            ErrorOccurred?.Invoke(errorMsg);
+            return null;
+        }
+        catch (TaskCanceledException ex)
+        {
+            var errorMsg = $"上传超时: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"图片上传异常: {errorMsg}");
+            ErrorOccurred?.Invoke(errorMsg);
+            return null;
+        }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"图片上传异常: {ex.Message}");
+            var errorMsg = $"上传异常: {ex.Message}";
+            System.Diagnostics.Debug.WriteLine($"图片上传异常: {errorMsg}");
+            ErrorOccurred?.Invoke(errorMsg);
             return null;
         }
     }

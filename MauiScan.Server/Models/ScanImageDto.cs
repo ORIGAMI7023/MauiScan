@@ -8,6 +8,7 @@ public class ScanImageDto
     public int Height { get; set; }
     public DateTime ScannedAt { get; set; }
     public string DownloadUrl { get; set; } = string.Empty;
+    public string ThumbnailUrl { get; set; } = string.Empty;
 }
 
 public class UploadResponse
