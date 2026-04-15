@@ -1,0 +1,1 @@
+- 在 macOS 上合并或构建时，需要临时从 MauiScan.ML/MauiScan.ML.csproj 的 TargetFrameworks 中移除 net10.0-windows10.0.19041.0，因为 macOS 无法构建 Windows 目标框架。

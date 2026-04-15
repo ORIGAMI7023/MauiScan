@@ -123,9 +123,9 @@
 			<Frameworks>Foundation CoreGraphics UIKit Accelerate CoreMedia CoreVideo AVFoundation QuartzCore</Frameworks>
 		</NativeReference>
 
-		<!-- iOS: 引用我们的扫描库 XCFramework -->
-		<NativeReference Include="Platforms\iOS\libopencv_scanner.xcframework">
-			<Kind>Framework</Kind>
+		<!-- iOS: 引用我们的扫描库（静态库 .a） -->
+		<NativeReference Include="Platforms\iOS\libopencv_scanner.xcframework\ios-arm64\libopencv_scanner.a">
+			<Kind>Static</Kind>
 			<ForceLoad>True</ForceLoad>
 		</NativeReference>
 	</ItemGroup>
