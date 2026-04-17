@@ -1,6 +1,12 @@
 using MauiScan.Models;
 using System.Diagnostics;
 
+#if IOS || MACCATALYST
+using CoreGraphics;
+using UIKit;
+using Foundation;
+#endif
+
 namespace MauiScan.Services;
 
 /// <summary>
@@ -104,8 +110,80 @@ public class ImageCropService
             };
 
             return (croppedBytes, cropRegion);
+#elif IOS || MACCATALYST
+            Debug.WriteLine($"[ImageCrop] Starting crop with shrink ratio: {shrinkRatio}");
+
+            var image = UIImage.LoadFromData(NSData.FromArray(imageBytes));
+            if (image == null)
+            {
+                Debug.WriteLine("[ImageCrop] Failed to decode image");
+                return null;
+            }
+
+            int imgWidth = (int)image.Size.Width;
+            int imgHeight = (int)image.Size.Height;
+            Debug.WriteLine($"[ImageCrop] Image size: {imgWidth}x{imgHeight}");
+
+            // 向内缩小四边形
+            var shrunkQuad = ShrinkQuad(quad, shrinkRatio);
+
+            Debug.WriteLine($"[ImageCrop] Original quad TL: ({quad.TopLeft.X},{quad.TopLeft.Y})");
+            Debug.WriteLine($"[ImageCrop] Shrunk quad TL: ({shrunkQuad.TopLeft.X},{shrunkQuad.TopLeft.Y})");
+
+            // 计算目标矩形尺寸
+            float width1 = Distance(shrunkQuad.TopLeft.X, shrunkQuad.TopLeft.Y, shrunkQuad.TopRight.X, shrunkQuad.TopRight.Y);
+            float width2 = Distance(shrunkQuad.BottomLeft.X, shrunkQuad.BottomLeft.Y, shrunkQuad.BottomRight.X, shrunkQuad.BottomRight.Y);
+            float height1 = Distance(shrunkQuad.TopLeft.X, shrunkQuad.TopLeft.Y, shrunkQuad.BottomLeft.X, shrunkQuad.BottomLeft.Y);
+            float height2 = Distance(shrunkQuad.TopRight.X, shrunkQuad.TopRight.Y, shrunkQuad.BottomRight.X, shrunkQuad.BottomRight.Y);
+
+            int dstWidth = (int)Math.Max(width1, width2);
+            int dstHeight = (int)Math.Max(height1, height2);
+
+            Debug.WriteLine($"[ImageCrop] Target size: {dstWidth}x{dstHeight}");
+
+            // 使用 CoreGraphics 进行裁剪
+            using var colorSpace = CGColorSpace.CreateDeviceRGB();
+            using var context = new CGBitmapContext(IntPtr.Zero, dstWidth, dstHeight, 8, 0, colorSpace, CGImageAlphaInfo.PremultipliedLast);
+            context.InterpolationQuality = CGInterpolationQuality.High;
+
+            // CGImage 坐标系 Y 轴从下往上，需要翻转
+            context.TranslateCTM(0, dstHeight);
+            context.ScaleCTM(1, -1);
+
+            // 创建源四边形路径（在原图坐标系中）
+            var quadPath = new CGPath();
+            quadPath.MoveToPoint(shrunkQuad.TopLeft.X, shrunkQuad.TopLeft.Y);
+            quadPath.AddLineToPoint(shrunkQuad.TopRight.X, shrunkQuad.TopRight.Y);
+            quadPath.AddLineToPoint(shrunkQuad.BottomRight.X, shrunkQuad.BottomRight.Y);
+            quadPath.AddLineToPoint(shrunkQuad.BottomLeft.X, shrunkQuad.BottomLeft.Y);
+            quadPath.CloseSubpath();
+
+            context.AddPath(quadPath);
+            context.Clip();
+
+            // 将原图绘制到目标区域（映射四边形到矩形）
+            var cgImage = image.CGImage;
+            context.DrawImage(new CGRect(0, 0, imgWidth, imgHeight), cgImage);
+
+            using var resultCgImage = context.ToImage();
+            using var resultUIImage = new UIImage(resultCgImage);
+            using var nsData = resultUIImage.AsJPEG(0.95f);
+            var croppedBytes = new byte[nsData.Length];
+            System.Runtime.InteropServices.Marshal.Copy(nsData.Bytes, croppedBytes, 0, (int)nsData.Length);
+
+            Debug.WriteLine($"[ImageCrop] Cropped image size: {croppedBytes.Length / 1024.0:F1} KB");
+
+            var cropRegion = new CropRegion
+            {
+                OriginalQuad = quad,
+                ShrunkQuad = shrunkQuad,
+                ShrinkRatio = shrinkRatio,
+                CroppedSize = (dstWidth, dstHeight)
+            };
+
+            return (croppedBytes, cropRegion);
 #else
-            Debug.WriteLine("[ImageCrop] Not supported on non-Android platforms");
+            Debug.WriteLine("[ImageCrop] Not supported on this platform");
             return null;
 #endif
         }
@@ -183,8 +261,41 @@ public class ImageCropService
             Debug.WriteLine($"[ImageCrop] Absolute quad TL: ({absoluteQuad.TopLeft.X},{absoluteQuad.TopLeft.Y})");
 
             return absoluteQuad;
+#elif IOS || MACCATALYST
+            Debug.WriteLine($"[ImageCrop] Transforming relative to absolute");
+
+            var shrunkQuad = cropRegion.ShrunkQuad;
+            var (dstWidth, dstHeight) = cropRegion.CroppedSize;
+
+            // 使用双线性插值将裁剪后矩形坐标映射回缩小后的四边形坐标
+            (float x, float y) BilinearMap(float rx, float ry)
+            {
+                float u = dstWidth > 0 ? rx / dstWidth : 0;
+                float v = dstHeight > 0 ? ry / dstHeight : 0;
+                float topX = shrunkQuad.TopLeft.X + u * (shrunkQuad.TopRight.X - shrunkQuad.TopLeft.X);
+                float botX = shrunkQuad.BottomLeft.X + u * (shrunkQuad.BottomRight.X - shrunkQuad.BottomLeft.X);
+                float topY = shrunkQuad.TopLeft.Y + u * (shrunkQuad.TopRight.Y - shrunkQuad.TopLeft.Y);
+                float botY = shrunkQuad.BottomLeft.Y + u * (shrunkQuad.BottomRight.Y - shrunkQuad.BottomLeft.Y);
+                return (topX + v * (botX - topX), topY + v * (botY - topY));
+            }
+
+            var tl = BilinearMap(relativeQuad.TopLeft.X, relativeQuad.TopLeft.Y);
+            var tr = BilinearMap(relativeQuad.TopRight.X, relativeQuad.TopRight.Y);
+            var br = BilinearMap(relativeQuad.BottomRight.X, relativeQuad.BottomRight.Y);
+            var bl = BilinearMap(relativeQuad.BottomLeft.X, relativeQuad.BottomLeft.Y);
+
+            var absoluteQuad = new QuadrilateralPoints(
+                new Point2D((int)tl.x, (int)tl.y),
+                new Point2D((int)tr.x, (int)tr.y),
+                new Point2D((int)br.x, (int)br.y),
+                new Point2D((int)bl.x, (int)bl.y)
+            );
+
+            Debug.WriteLine($"[ImageCrop] Absolute quad TL: ({absoluteQuad.TopLeft.X},{absoluteQuad.TopLeft.Y})");
+
+            return absoluteQuad;
 #else
-            Debug.WriteLine("[ImageCrop] Transform not supported on non-Android platforms");
+            Debug.WriteLine("[ImageCrop] Transform not supported on this platform");
             return relativeQuad;
 #endif
         }

@@ -1,6 +1,11 @@
 using MauiScan.Models;
 using System.Diagnostics;
 
+#if IOS || MACCATALYST
+using UIKit;
+using Foundation;
+#endif
+
 namespace MauiScan.Services;
 
 /// <summary>
@@ -200,8 +205,14 @@ public class TwoStageDetectionService
             {
                 return (bitmap.Width, bitmap.Height);
             }
+#elif IOS || MACCATALYST
+            using var nsData = NSData.FromArray(imageBytes);
+            using var image = UIImage.LoadFromData(nsData);
+            if (image != null)
+            {
+                return ((int)image.Size.Width, (int)image.Size.Height);
+            }
 #endif
-            // 默认值
             return (0, 0);
         }
         catch

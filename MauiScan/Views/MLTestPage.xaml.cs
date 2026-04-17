@@ -1,9 +1,15 @@
 using MauiScan.ML.Services;
 using MauiScan.ML.Models;
+using MauiScan.Services;
 using System.Diagnostics;
 #if !ANDROID && !IOS && !MACCATALYST
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
+#endif
+#if IOS || MACCATALYST
+using CoreGraphics;
+using UIKit;
+using Foundation;
 #endif
 
 namespace MauiScan.Views;
@@ -256,8 +262,63 @@ public partial class MLTestPage : ContentPage
 
                 return outputStream.ToArray();
             });
+#elif IOS || MACCATALYST
+            // iOS: 用 CoreGraphics 缩放到 512x512 并提取 RGB 数据
+            _currentImageBytes = await Task.Run(() =>
+            {
+                originalStream.Position = 0;
+                var nsData = NSData.FromStream(originalStream);
+                var image = UIImage.LoadFromData(nsData);
+                if (image == null)
+                    throw new Exception("无法解码图片");
+
+                _originalWidth = (int)image.Size.Width;
+                _originalHeight = (int)image.Size.Height;
+                Debug.WriteLine($"[ML Test] Original dimensions: {_originalWidth}x{_originalHeight}");
+
+                Debug.WriteLine($"[ML Test] Resizing to: {targetSize}x{targetSize}");
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+
+                // 缩放到 512x512
+                using var colorSpace = CGColorSpace.CreateDeviceRGB();
+                using var context = new CGBitmapContext(IntPtr.Zero, targetSize, targetSize, 8, 0, colorSpace, CGImageAlphaInfo.PremultipliedLast);
+                context.InterpolationQuality = CGInterpolationQuality.High;
+                context.DrawImage(new CGRect(0, 0, targetSize, targetSize), image.CGImage);
+
+                Debug.WriteLine($"[ML Test] iOS resize took: {sw.ElapsedMilliseconds}ms");
+
+                // 提取 RGB 数据（CHW 格式）
+                sw.Restart();
+                _cachedRgbData = new float[3 * targetSize * targetSize];
+                IntPtr dataPtr = context.Data;
+                int stride = targetSize * 4; // RGBA
+                for (int y = 0; y < targetSize; y++)
+                {
+                    for (int x = 0; x < targetSize; x++)
+                    {
+                        int offset = y * stride + x * 4; // RGBA
+                        int idx = y * targetSize + x;
+                        byte r = System.Runtime.InteropServices.Marshal.ReadByte(dataPtr, offset);
+                        byte g = System.Runtime.InteropServices.Marshal.ReadByte(dataPtr, offset + 1);
+                        byte b = System.Runtime.InteropServices.Marshal.ReadByte(dataPtr, offset + 2);
+                        _cachedRgbData[idx] = r / 255f;
+                        _cachedRgbData[targetSize * targetSize + idx] = g / 255f;
+                        _cachedRgbData[2 * targetSize * targetSize + idx] = b / 255f;
+                    }
+                }
+                Debug.WriteLine($"[ML Test] RGB data extracted: {_cachedRgbData.Length} floats, took {sw.ElapsedMilliseconds}ms");
+
+                // 转为 PNG 用于显示
+                sw.Restart();
+                using var resultCgImage = context.ToImage();
+                using var resultUIImage = new UIImage(resultCgImage);
+                using var resultNsData = resultUIImage.AsPNG();
+                Debug.WriteLine($"[ML Test] PNG for display: {resultNsData.Length / 1024.0:F1} KB, took {sw.ElapsedMilliseconds}ms");
+
+                return resultNsData.ToArray();
+            });
 #else
-            // 非 Android 平台，直接使用原始数据
+            // 其他平台，直接使用原始数据
             _currentImageBytes = await Task.Run(() =>
             {
                 originalStream.Position = 0;
@@ -356,6 +417,13 @@ public partial class MLTestPage : ContentPage
 
             Debug.WriteLine($"[ML Test] Running ML inference...");
             var result = await _mlService.DetectCornersFromRgbAsync(rgbData, _originalWidth, _originalHeight, _originalImageBytes);
+#elif IOS || MACCATALYST
+            // iOS: 使用缓存的 RGB 数据进行推理（和 Android 一样高质量）
+            Debug.WriteLine($"[ML Test] Running ML inference with cached RGB data ({_cachedRgbData?.Length ?? 0} floats)...");
+            float[] rgbData = _cachedRgbData!;
+            var result = _cachedRgbData != null
+                ? await _mlService.DetectCornersFromRgbAsync(rgbData, _originalWidth, _originalHeight, _originalImageBytes)
+                : await _mlService.DetectCornersAsync(_originalImageBytes);
 #else
             Debug.WriteLine($"[ML Test] Using original image bytes: {_originalImageBytes.Length} bytes");
             var result = await _mlService.DetectCornersAsync(_originalImageBytes);
@@ -554,6 +622,28 @@ public partial class MLTestPage : ContentPage
 
                 Debug.WriteLine($"[ML Test] Transform completed: {outputStream.Length / 1024.0:F1} KB");
                 return outputStream.ToArray();
+#elif IOS || MACCATALYST
+                // iOS: 使用 NativeImageProcessingService 进行透视变换
+                var nativeService = new NativeImageProcessingService();
+                var quad = new NativeImageProcessingService.QuadPoints
+                {
+                    TopLeftX = corners.TopLeftX,
+                    TopLeftY = corners.TopLeftY,
+                    TopRightX = corners.TopRightX,
+                    TopRightY = corners.TopRightY,
+                    BottomRightX = corners.BottomRightX,
+                    BottomRightY = corners.BottomRightY,
+                    BottomLeftX = corners.BottomLeftX,
+                    BottomLeftY = corners.BottomLeftY
+                };
+                var transformResult = nativeService.ApplyPerspectiveTransform(_originalImageBytes, quad);
+                if (transformResult.IsSuccess)
+                {
+                    Debug.WriteLine($"[ML Test] Transform completed: {transformResult.ImageData.Length / 1024.0:F1} KB");
+                    return transformResult.ImageData;
+                }
+                Debug.WriteLine($"[ML Test] Transform failed: {transformResult.ErrorMessage}");
+                return null;
 #else
                 return null;
 #endif
@@ -689,6 +779,97 @@ public partial class MLTestPage : ContentPage
 
                 Debug.WriteLine($"[ML Test] Visualization created: {outputStream.Length / 1024.0:F1} KB");
                 return outputStream.ToArray();
+#elif IOS || MACCATALYST
+                // iOS: 使用 CoreGraphics 绘制可视化
+                var nsData = NSData.FromArray(_originalImageBytes);
+                var image = UIImage.LoadFromData(nsData);
+                if (image == null) return null;
+
+                int width = (int)image.Size.Width;
+                int height = (int)image.Size.Height;
+
+                using var colorSpace = CGColorSpace.CreateDeviceRGB();
+                using var context = new CGBitmapContext(IntPtr.Zero, width, height, 8, 0, colorSpace, CGImageAlphaInfo.PremultipliedLast);
+
+                // 绘制原图（翻转 Y 轴）
+                context.TranslateCTM(0, height);
+                context.ScaleCTM(1, -1);
+                context.DrawImage(new CGRect(0, 0, width, height), image.CGImage);
+
+                float strokeWidth = Math.Max(4f, Math.Min(width, height) / 200f);
+                float radius = strokeWidth * 3;
+
+                // ML 原始输出：蓝色
+                var mlPoints = new[]
+                {
+                    (mlCorners.TopLeftX, mlCorners.TopLeftY),
+                    (mlCorners.TopRightX, mlCorners.TopRightY),
+                    (mlCorners.BottomRightX, mlCorners.BottomRightY),
+                    (mlCorners.BottomLeftX, mlCorners.BottomLeftY)
+                };
+
+                // 翻转 Y 轴绘制（因为前面已经 ScaleCTM(1,-1)）
+                context.TranslateCTM(0, height);
+                context.ScaleCTM(1, -1);
+
+                context.SetStrokeColor(0, 0, 1, 1); // Blue
+                context.SetLineWidth(strokeWidth);
+                for (int i = 0; i < 4; i++)
+                {
+                    var p1 = mlPoints[i];
+                    var p2 = mlPoints[(i + 1) % 4];
+                    context.MoveTo(p1.Item1, p1.Item2);
+                    context.AddLineToPoint(p2.Item1, p2.Item2);
+                }
+                context.StrokePath();
+
+                // ML 角点
+                foreach (var pt in mlPoints)
+                {
+                    context.StrokeEllipseInRect(new CGRect(pt.Item1 - radius, pt.Item2 - radius, radius * 2, radius * 2));
+                }
+
+                // CV 精修结果：红色
+                context.SetStrokeColor(1, 0, 0, 1); // Red
+                var refinedPoints = new[]
+                {
+                    (refinedCorners.TopLeftX, refinedCorners.TopLeftY),
+                    (refinedCorners.TopRightX, refinedCorners.TopRightY),
+                    (refinedCorners.BottomRightX, refinedCorners.BottomRightY),
+                    (refinedCorners.BottomLeftX, refinedCorners.BottomLeftY)
+                };
+
+                for (int i = 0; i < 4; i++)
+                {
+                    var p1 = refinedPoints[i];
+                    var p2 = refinedPoints[(i + 1) % 4];
+                    context.MoveTo(p1.Item1, p1.Item2);
+                    context.AddLineToPoint(p2.Item1, p2.Item2);
+                }
+                context.StrokePath();
+
+                foreach (var pt in refinedPoints)
+                {
+                    context.StrokeEllipseInRect(new CGRect(pt.Item1 - radius, pt.Item2 - radius, radius * 2, radius * 2));
+                }
+
+                // 差异连线：绿色
+                context.SetStrokeColor(0, 1, 0, 1); // Lime
+                context.SetLineWidth(strokeWidth / 2);
+                for (int i = 0; i < 4; i++)
+                {
+                    var ml = mlPoints[i];
+                    var refined = refinedPoints[i];
+                    context.MoveTo(ml.Item1, ml.Item2);
+                    context.AddLineToPoint(refined.Item1, refined.Item2);
+                }
+                context.StrokePath();
+
+                using var resultCgImage = context.ToImage();
+                using var resultUIImage = new UIImage(resultCgImage);
+                using var resultNsData = resultUIImage.AsJPEG(0.9f);
+                Debug.WriteLine($"[ML Test] Visualization created: {resultNsData.Length / 1024.0:F1} KB");
+                return resultNsData.ToArray();
 #else
                 return null;
 #endif

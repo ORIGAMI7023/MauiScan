@@ -2,6 +2,11 @@ using MauiScan.Models;
 using MauiScan.Services;
 using MauiScan.Services.Sync;
 
+#if IOS || MACCATALYST
+using UIKit;
+using Foundation;
+#endif
+
 namespace MauiScan.Views;
 
 public partial class ScanPage : ContentPage
@@ -216,11 +221,33 @@ public partial class ScanPage : ContentPage
             // Android: 保存到系统相册
             await SaveToGalleryAndroidAsync(fileName, _currentImageData);
             StatusLabel.Text = $"✓ 已保存到相册: {fileName}";
+#elif IOS || MACCATALYST
+            // iOS: 保存到系统相册
+            var image = UIImage.LoadFromData(NSData.FromArray(_currentImageData));
+            if (image != null)
+            {
+                var tcs = new TaskCompletionSource<bool>();
+                image.SaveToPhotosAlbum((img, error) =>
+                {
+                    MainThread.BeginInvokeOnMainThread(() =>
+                    {
+                        tcs.TrySetResult(error == null);
+                    });
+                });
+                var success = await tcs.Task;
+                StatusLabel.Text = success
+                    ? $"✓ 已保存到相册: {fileName}"
+                    : $"保存失败";
+            }
+            else
+            {
+                StatusLabel.Text = "保存失败: 无法解码图片";
+            }
 #else
             // 其他平台: 保存到应用目录
             var filePath = Path.Combine(FileSystem.AppDataDirectory, fileName);
             await File.WriteAllBytesAsync(filePath, _currentImageData);
-            StatusLabel.Text = $"✓ 已保存: {fileName}";    
+            StatusLabel.Text = $"✓ 已保存: {fileName}";
 #endif
         }
         catch (Exception ex)

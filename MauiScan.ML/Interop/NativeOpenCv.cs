@@ -10,7 +10,7 @@ internal static class NativeOpenCv
 #if ANDROID
     private const string LibraryName = "opencv_scanner";
 #elif IOS || MACCATALYST
-    private const string LibraryName = "@rpath/opencv_scanner.framework/opencv_scanner";
+    private const string LibraryName = "__Internal";
 #else
     private const string LibraryName = "opencv_scanner"; // 不应该被调用
 #endif

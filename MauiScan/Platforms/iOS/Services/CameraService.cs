@@ -1,7 +1,5 @@
-using AVFoundation;
 using Foundation;
 using MauiScan.Services;
-using Photos;
 using UIKit;
 
 namespace MauiScan.Platforms.iOS.Services
@@ -118,14 +116,16 @@ namespace MauiScan.Platforms.iOS.Services
 
         public async Task<bool> CheckPermissionsAsync()
         {
-            // 简化实现：iOS 会自动在 UIImagePickerController 中处理权限
-            return true;
+            var status = await Permissions.CheckStatusAsync<Permissions.Camera>();
+            Log($"Camera permission status: {status}");
+            return status == PermissionStatus.Granted;
         }
 
         public async Task<bool> RequestPermissionsAsync()
         {
-            // 简化实现：iOS 会自动在 UIImagePickerController 中处理权限
-            return true;
+            var status = await Permissions.RequestAsync<Permissions.Camera>();
+            Log($"Camera permission request result: {status}");
+            return status == PermissionStatus.Granted;
         }
     }
 }

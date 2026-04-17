@@ -2,6 +2,12 @@ using MauiScan.Models;
 using MauiScan.Services;
 using Microsoft.Maui.Layouts;
 
+#if IOS || MACCATALYST
+using CoreGraphics;
+using UIKit;
+using Foundation;
+#endif
+
 namespace MauiScan.Views;
 
 public partial class ScanPreviewPage : ContentPage
@@ -147,6 +153,17 @@ public partial class ScanPreviewPage : ContentPage
         int h = options.OutHeight;
         System.Diagnostics.Debug.WriteLine($"[Coord] DecodeImageDimensions (Android): {w}x{h}");
         return (w > 0 ? w : 1920, h > 0 ? h : 1080);
+#elif IOS || MACCATALYST
+        using var nsData = NSData.FromArray(imageData);
+        using var image = UIImage.LoadFromData(nsData);
+        if (image != null)
+        {
+            int w = (int)image.Size.Width;
+            int h = (int)image.Size.Height;
+            System.Diagnostics.Debug.WriteLine($"[Coord] DecodeImageDimensions (iOS): {w}x{h}");
+            return (w > 0 ? w : 1920, h > 0 ? h : 1080);
+        }
+        return (1920, 1080);
 #else
         // 回退：扫描JPEG SOF标记
         for (int i = 0; i < imageData.Length - 8; i++)
@@ -499,6 +516,41 @@ public partial class ScanPreviewPage : ContentPage
         using var stream = new MemoryStream();
         rotatedBitmap.Compress(Android.Graphics.Bitmap.CompressFormat.Jpeg, 90, stream);
         return stream.ToArray();
+#elif IOS || MACCATALYST
+        using var nsData = NSData.FromArray(imageBytes);
+        using var image = UIImage.LoadFromData(nsData);
+        if (image == null) return null;
+
+        // CoreGraphics 的旋转角度是弧度，顺时针为正
+        float radians = (float)(degrees * Math.PI / 180.0);
+
+        // 计算旋转后的尺寸
+        nfloat imgW = image.Size.Width;
+        nfloat imgH = image.Size.Height;
+        nfloat newWidth, newHeight;
+        if (degrees == 90 || degrees == -90 || degrees == 270 || degrees == -270)
+        {
+            newWidth = imgH;
+            newHeight = imgW;
+        }
+        else
+        {
+            newWidth = imgW;
+            newHeight = imgH;
+        }
+
+        using var colorSpace = CGColorSpace.CreateDeviceRGB();
+        using var context = new CGBitmapContext(IntPtr.Zero, (int)newWidth, (int)newHeight, 8, 0, colorSpace, CGImageAlphaInfo.PremultipliedLast);
+        context.TranslateCTM(newWidth / 2, newHeight / 2);
+        context.RotateCTM(radians);
+        context.DrawImage(new CGRect(-imgW / 2, -imgH / 2, imgW, imgH), image.CGImage);
+
+        using var resultCgImage = context.ToImage();
+        using var resultImage = new UIImage(resultCgImage);
+        using var resultNsData = resultImage.AsJPEG(0.9f);
+        var bytes = new byte[resultNsData.Length];
+        System.Runtime.InteropServices.Marshal.Copy(resultNsData.Bytes, bytes, 0, (int)resultNsData.Length);
+        return bytes;
 #else
         return imageBytes;
 #endif
@@ -698,8 +750,27 @@ public partial class ScanPreviewPage : ContentPage
         using var stream = new MemoryStream();
         croppedBitmap.Compress(Android.Graphics.Bitmap.CompressFormat.Jpeg, 95, stream);
         return stream.ToArray();
+#elif IOS || MACCATALYST
+        using var nsData = NSData.FromArray(imageData);
+        using var image = UIImage.LoadFromData(nsData);
+        if (image == null) throw new Exception("无法解码图片");
+
+        // 确保裁剪区域在图片范围内
+        x = Math.Max(0, x);
+        y = Math.Max(0, y);
+        width = Math.Min(width, (int)image.Size.Width - x);
+        height = Math.Min(height, (int)image.Size.Height - y);
+
+        // CoreGraphics 坐标系 Y 轴从下往上，需要翻转 Y
+        nfloat cgY = image.Size.Height - y - height;
+
+        using var cgImage = image.CGImage!.WithImageInRect(new CGRect(x, cgY, width, height));
+        using var resultImage = new UIImage(cgImage!);
+        using var resultNsData = resultImage.AsJPEG(0.95f);
+        var bytes = new byte[resultNsData.Length];
+        System.Runtime.InteropServices.Marshal.Copy(resultNsData.Bytes, bytes, 0, (int)resultNsData.Length);
+        return bytes;
 #else
-        // 其他平台暂不实现
         return imageData;
 #endif
     }
